@@ -1,0 +1,47 @@
+// Colores alusivos reales de cada club (no oficiales/exactos de marca,
+// aproximación de la camiseta más reconocible) -- Real Madrid siempre se
+// muestra en blanco con el escudo, el rival toma su color.
+export const TEAM_COLORS: Record<string, string> = {
+  "Barcelona": "#a50044",
+  "Atletico Madrid": "#cb3524",
+  "Atlético Madrid": "#cb3524",
+  "Sevilla": "#d40024",
+  "Real Betis": "#00954c",
+  "Real Sociedad": "#0067b1",
+  "Athletic Club": "#ee2523",
+  "Villarreal": "#ffe667",
+  "Valencia": "#f36c21",
+  "Espanyol": "#0a3f8f",
+  "Celta Vigo": "#8ac3ee",
+  "Celta": "#8ac3ee",
+  "Osasuna": "#ab1216",
+  "Getafe": "#005ca9",
+  "Girona": "#cf122e",
+  "Mallorca": "#e20613",
+  "Rayo Vallecano": "#e2231a",
+  "Las Palmas": "#ffe11a",
+  "Alaves": "#0055a5",
+  "Alavés": "#0055a5",
+  "Leganes": "#0a3a6e",
+  "Leganés": "#0a3a6e",
+  "Valladolid": "#663399",
+  "Oviedo": "#0a3d91",
+  "Levante": "#0e5faa",
+  "Malaga": "#0a5ca8",
+  "Manchester City": "#6cabdd",
+  "Liverpool": "#c8102e",
+  "Bayern Munich": "#dc052d",
+  "Bayern München": "#dc052d",
+  "Paris Saint Germain": "#004170",
+  "Juventus": "#000000",
+  "Inter": "#0068a8",
+  "AC Milan": "#fb090b",
+  "Arsenal": "#ef0107",
+  "Chelsea": "#034694",
+  "Manchester United": "#da291c",
+  "Borussia Dortmund": "#fde100",
+};
+
+export function teamColor(name: string): string {
+  return TEAM_COLORS[name] ?? "#6a6879";
+}

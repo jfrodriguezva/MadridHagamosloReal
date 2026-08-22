@@ -1,0 +1,30 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #f7f6f2;
+  --surface: #ffffff;
+  --surface-2: #efece4;
+  --line: #e1ddd0;
+  --text: #1a1a24;
+  --muted: #6a6879;
+  --gold: #a8791a;
+  --gold-soft: #f1e6c8;
+  --purple: #2b2350;
+  --purple-soft: #eae7f5;
+  --good: #2f7a4f;
+  --bad: #a3323a;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Source Sans 3", ui-sans-serif, system-ui, sans-serif;
+}
+
+.font-display {
+  font-family: "Big Shoulders Display", sans-serif;
+}
+
+.font-mono {
+  font-family: "JetBrains Mono", monospace;
+}

@@ -1,0 +1,6 @@
+@Madrid.Api_HostAddress = http://localhost:5004
+
+GET {{Madrid.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

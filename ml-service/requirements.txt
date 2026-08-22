@@ -1,0 +1,15 @@
+requests==2.32.3
+pandas==2.2.3
+numpy==1.26.4
+scikit-learn==1.5.2
+xgboost==2.1.1
+lightgbm==4.5.0
+pyodbc==5.2.0
+sqlalchemy==2.0.35
+joblib==1.4.2
+python-dotenv==1.0.1
+pip-system-certs==4.0
+fastapi==0.115.0
+uvicorn==0.31.0
+pyarrow==17.0.0
+scipy==1.14.1
