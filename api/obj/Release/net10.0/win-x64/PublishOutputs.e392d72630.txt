@@ -1,0 +1,7 @@
+C:\jfrodriguezv\SourceCodeAnthropic\Hagamoslo\api\publish\appsettings.Development.json
+C:\jfrodriguezv\SourceCodeAnthropic\Hagamoslo\api\publish\appsettings.json
+C:\jfrodriguezv\SourceCodeAnthropic\Hagamoslo\api\publish\Madrid.Api.pdb
+C:\jfrodriguezv\SourceCodeAnthropic\Hagamoslo\api\publish\aspnetcorev2_inprocess.dll
+C:\jfrodriguezv\SourceCodeAnthropic\Hagamoslo\api\publish\Microsoft.Data.SqlClient.SNI.dll
+C:\jfrodriguezv\SourceCodeAnthropic\Hagamoslo\api\publish\e_sqlite3.dll
+C:\jfrodriguezv\SourceCodeAnthropic\Hagamoslo\api\publish\Madrid.Api.exe

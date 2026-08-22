@@ -1,7 +1,4 @@
-.venv/
+# Solo secretos reales -- todo lo demás (.venv, __pycache__, modelos .pkl,
+# etc.) se sube a propósito, ver el .gitignore de la raíz del proyecto.
 .env
-__pycache__/
-*.pyc
-models/*.pkl
-models/*.json
-data/raw/
+!.env.example

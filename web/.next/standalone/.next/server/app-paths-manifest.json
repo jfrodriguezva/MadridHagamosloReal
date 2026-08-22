@@ -1,0 +1,11 @@
+{
+  "/_global-error/page": "app/_global-error/page.js",
+  "/_not-found/page": "app/_not-found/page.js",
+  "/calificaciones/page": "app/calificaciones/page.js",
+  "/favicon.ico/route": "app/favicon.ico/route.js",
+  "/jugadores/page": "app/jugadores/page.js",
+  "/page": "app/page.js",
+  "/podcast/page": "app/podcast/page.js",
+  "/prediccion/page": "app/prediccion/page.js",
+  "/tactica/page": "app/tactica/page.js"
+}

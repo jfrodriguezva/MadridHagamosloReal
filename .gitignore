@@ -1,25 +1,8 @@
-# Dependencias / regenerables
-node_modules/
-.venv/
-__pycache__/
-*.pyc
+# Solo se excluyen secretos reales (nunca deben viajar a git) y basura de SO.
+# Todo lo demás (node_modules, bin/obj, .next, .venv, instalador compilado,
+# runtime portátil) se sube a propósito para que un clon nuevo sea una copia
+# exacta y funcional sin pasos de regeneración -- ver conversación/RECOVERY.md.
 
-# Builds .NET (api/publish/Madrid.Api.exe solo es self-contained de ~111MB,
-# excede el límite de 100MB/archivo de GitHub -- de todas formas se regenera
-# con dotnet publish, ver RECOVERY.md)
-bin/
-obj/
-api/publish/
-
-# Build Next.js
-.next/
-web/.next/
-
-# Artefactos del instalador (se recompilan, no versionar binarios grandes)
-installer/Output/
-installer/runtime/
-
-# Secretos -- nunca subir claves reales
 .env
 .env.local
 .env.production
@@ -27,17 +10,10 @@ ml-service/.env
 !installer/scripts/.env.example
 !ml-service/.env.example
 
-# SQLite locales -- excepto el snapshot que necesita el instalador (~4MB, se
-# versiona a propósito para poder compilar el instalador sin SQL Server)
-*.db
-*.db-shm
-*.db-wal
-!desktop/madrid.db
-
-# Archivos comprimidos sueltos
-*.rar
-*.zip
-
-# Misc
 .DS_Store
 Thumbs.db
+
+# Caché de runtime de WebView2 (Chromium: cookies, crash dumps, GPU cache) --
+# se crea sola al correr la app en dev, no es parte del proyecto.
+*.WebView2/
+.claude/
