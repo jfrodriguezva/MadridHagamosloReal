@@ -35,6 +35,9 @@ string Limit(int n) => isSqlite ? $"LIMIT {n}" : "";
 string TopP(string param) => isSqlite ? "" : $"TOP ({param})";
 string LimitP(string param) => isSqlite ? $"LIMIT {param}" : "";
 
+string? connString = null;
+bool usingDefaultConnString = false;
+
 var sqlitePath = builder.Configuration["SQLITE_PATH"] ?? Environment.GetEnvironmentVariable("SQLITE_PATH") ?? "madrid.db";
 
 if (isSqlite)
@@ -44,12 +47,38 @@ if (isSqlite)
 }
 else
 {
-    var connString = builder.Configuration.GetConnectionString("MadridDb")
-        ?? "Server=localhost;Database=MadridHagamosloReal;User Id=sa;Password=Truper@00;TrustServerCertificate=True;";
-    builder.Services.AddSingleton<Func<IDbConnection>>(() => new SqlConnection(connString));
+    // La cadena de conexión trae credenciales, así que NUNCA se escribe aquí.
+    // Se busca en este orden:
+    //   1. Configuración "ConnectionStrings:MadridDb" -- appsettings.json, la
+    //      variable de entorno ConnectionStrings__MadridDb, los user-secrets
+    //      (solo en Development) o --ConnectionStrings:MadridDb=... al arrancar.
+    //   2. Variable de entorno MADRID_DB_CONNECTION -- funciona sin importar el
+    //      ASPNETCORE_ENVIRONMENT, que es el caso cuando la app WPF lanza la API
+    //      en desarrollo (ver desktop/MainWindow.xaml.cs, EnsureApiRunning).
+    // Lo cómodo para desarrollo es guardarla una sola vez, fuera del repo:
+    //   cd api && dotnet user-secrets set "ConnectionStrings:MadridDb" "<cadena>"
+    connString = builder.Configuration.GetConnectionString("MadridDb")
+        ?? Environment.GetEnvironmentVariable("MADRID_DB_CONNECTION");
+
+    // Sin nada configurado se usa un default LOCAL y SIN CONTRASEÑA (autenticación
+    // integrada de Windows): no es un secreto, así que puede vivir en el código, y
+    // basta para un SQL Server de desarrollo en la propia máquina. Si tu instancia
+    // usa usuario/contraseña de SQL, configura la cadena con cualquiera de los dos
+    // mecanismos de arriba -- el aviso al arrancar te lo recuerda.
+    usingDefaultConnString = string.IsNullOrWhiteSpace(connString);
+    if (usingDefaultConnString)
+        connString = "Server=localhost;Database=MadridHagamosloReal;Trusted_Connection=True;TrustServerCertificate=True;";
+
+    builder.Services.AddSingleton<Func<IDbConnection>>(() => new SqlConnection(connString!));
 }
 
 var app = builder.Build();
+
+if (usingDefaultConnString)
+    app.Logger.LogWarning(
+        "Sin cadena de conexión configurada: usando el default local con autenticación integrada de Windows. " +
+        "Si tu SQL Server pide usuario/contraseña, define ConnectionStrings:MadridDb (user-secrets o " +
+        "ConnectionStrings__MadridDb) o la variable de entorno MADRID_DB_CONNECTION -- ver RECOVERY.md.");
 
 app.UseCors();
 

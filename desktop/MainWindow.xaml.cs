@@ -188,7 +188,15 @@ public partial class MainWindow : Window
                 Arguments = $"\"{DevApiDll}\"",
                 UseShellExecute = false,
                 CreateNoWindow = true,
-                EnvironmentVariables = { ["ASPNETCORE_URLS"] = ApiUrl },
+                EnvironmentVariables =
+                {
+                    ["ASPNETCORE_URLS"] = ApiUrl,
+                    // Sin esto el host arranca como Production y NO lee los user-secrets,
+                    // que es donde vive la cadena de conexión de SQL Server en desarrollo
+                    // (ver api/Program.cs). Lanzar la API a mano con 'dotnet run' ya la
+                    // pone en Development vía launchSettings.json.
+                    ["ASPNETCORE_ENVIRONMENT"] = "Development",
+                },
             };
         _apiProcess = new Process { StartInfo = apiStart };
         _apiProcess.Start();

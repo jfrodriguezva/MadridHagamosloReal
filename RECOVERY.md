@@ -53,10 +53,22 @@ Requiere en el equipo nuevo:
 
 - **.NET SDK 10** (`dotnet --version` → `10.0.400` o similar)
 - **Node.js** v20+ (se probó con v24) y npm
-- **SQL Server** (local o accesible) — es la fuente de verdad en desarrollo;
-  la cadena de conexión por defecto está en `api/Program.cs` (~línea 39,
-  `ConnectionStrings:MadridDb` o el fallback embebido) — ajústala si tu SQL
-  Server tiene otro usuario/password/instancia.
+- **SQL Server** (local o accesible) — es la fuente de verdad en desarrollo.
+  La cadena de conexión **no está en el código** (traía credenciales): si no
+  configuras ninguna, `api/Program.cs` usa un default local sin contraseña con
+  autenticación integrada de Windows, y avisa en el log al arrancar. Si tu
+  instancia pide usuario/contraseña de SQL, guárdala una sola vez fuera del
+  repo:
+
+  ```bash
+  cd api
+  dotnet user-secrets set "ConnectionStrings:MadridDb" \
+    "Server=localhost;Database=MadridHagamosloReal;User Id=sa;Password=TU_PASSWORD;TrustServerCertificate=True;"
+  ```
+
+  Queda en `%APPDATA%\Microsoft\UserSecrets` y nunca viaja a git. Alternativa
+  sin `user-secrets`: la variable de entorno `MADRID_DB_CONNECTION`, que
+  funciona en cualquier entorno (útil si lanzas la API fuera de Development).
 - (Opcional, solo si vas a re-entrenar el modelo o correr los scripts de
   carga histórica) **Python 3.12** + `pip install -r ml-service/requirements.txt`
   — esto es aparte del Python portátil que va DENTRO del instalador, ese no

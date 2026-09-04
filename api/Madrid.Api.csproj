@@ -4,6 +4,9 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Habilita 'dotnet user-secrets' para guardar la cadena de conexión de
+         desarrollo fuera del repo (queda en %APPDATA%\Microsoft\UserSecrets). -->
+    <UserSecretsId>ca53511f-067f-48ad-a2f9-17e630d5aed5</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>
