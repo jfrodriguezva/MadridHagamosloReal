@@ -9,7 +9,5 @@ sqlalchemy==2.0.35
 joblib==1.4.2
 python-dotenv==1.0.1
 pip-system-certs==4.0
-fastapi==0.115.0
-uvicorn==0.31.0
 pyarrow==17.0.0
 scipy==1.14.1

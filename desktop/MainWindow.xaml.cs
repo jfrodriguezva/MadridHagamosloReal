@@ -73,7 +73,6 @@ public partial class MainWindow : Window
         Directory.CreateDirectory(userDataFolder);
         var environment = await CoreWebView2Environment.CreateAsync(userDataFolder: userDataFolder);
         await Browser.EnsureCoreWebView2Async(environment);
-        Browser.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
 
         await EnsureApiRunning();
         await EnsureWebRunning();
@@ -145,59 +144,6 @@ public partial class MainWindow : Window
         catch
         {
             // sin próximo partido en la BD o API no disponible todavía -- reintenta en el próximo tick
-        }
-    }
-
-    private int _mediaHostCounter = 0;
-
-    // Mapea la carpeta del archivo elegido a un host virtual https:// -- así el
-    // navegador (y ffmpeg.wasm, que necesita hacer fetch() de bytes reales) puede
-    // leerlo igual que un recurso web normal, sin los líos de permisos/CORS de file://.
-    private string MapFileToVirtualUrl(string filePath)
-    {
-        var dir = System.IO.Path.GetDirectoryName(filePath)!;
-        var host = $"media{_mediaHostCounter++}.local";
-        Browser.CoreWebView2.SetVirtualHostNameToFolderMapping(
-            host, dir, Microsoft.Web.WebView2.Core.CoreWebView2HostResourceAccessKind.Allow);
-        return $"https://{host}/{Uri.EscapeDataString(System.IO.Path.GetFileName(filePath))}";
-    }
-
-    // Puente nativo WPF <-> web: la página llama window.chrome.webview.postMessage({type:"pickVideoFile"})
-    // y aquí respondemos con la ruta elegida via un selector de archivos nativo de Windows.
-    private void OnWebMessageReceived(object? sender, Microsoft.Web.WebView2.Core.CoreWebView2WebMessageReceivedEventArgs e)
-    {
-        string json;
-        try { json = e.WebMessageAsJson; } catch { return; }
-
-        using var doc = System.Text.Json.JsonDocument.Parse(json);
-        if (!doc.RootElement.TryGetProperty("type", out var typeEl)) return;
-        var type = typeEl.GetString();
-
-        if (type == "pickVideoFile")
-        {
-            var dialog = new Microsoft.Win32.OpenFileDialog
-            {
-                Title = "Selecciona tu grabación",
-                Filter = "Video (*.mp4;*.mov;*.mkv;*.avi)|*.mp4;*.mov;*.mkv;*.avi|Todos los archivos (*.*)|*.*",
-            };
-            bool picked = dialog.ShowDialog(this) == true;
-            var response = picked
-                ? new { type = "videoFilePicked", path = dialog.FileName, name = System.IO.Path.GetFileName(dialog.FileName), url = MapFileToVirtualUrl(dialog.FileName) }
-                : new { type = "videoFilePicked", path = (string?)null, name = (string?)null, url = (string?)null };
-            Browser.CoreWebView2.PostWebMessageAsJson(System.Text.Json.JsonSerializer.Serialize(response));
-        }
-        else if (type == "pickImageFile")
-        {
-            var dialog = new Microsoft.Win32.OpenFileDialog
-            {
-                Title = "Selecciona una imagen",
-                Filter = "Imagen (*.png;*.jpg;*.jpeg;*.webp)|*.png;*.jpg;*.jpeg;*.webp|Todos los archivos (*.*)|*.*",
-            };
-            bool picked = dialog.ShowDialog(this) == true;
-            var response = picked
-                ? new { type = "imageFilePicked", path = dialog.FileName, name = System.IO.Path.GetFileName(dialog.FileName), url = MapFileToVirtualUrl(dialog.FileName) }
-                : new { type = "imageFilePicked", path = (string?)null, name = (string?)null, url = (string?)null };
-            Browser.CoreWebView2.PostWebMessageAsJson(System.Text.Json.JsonSerializer.Serialize(response));
         }
     }
 
