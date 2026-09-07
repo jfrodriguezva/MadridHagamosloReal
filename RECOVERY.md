@@ -34,10 +34,12 @@ No necesitas Node, .NET SDK, ni SQL Server en el equipo nuevo.
    (o cópialo junto con toda la carpeta del proyecto).
 2. Ejecútalo como Administrador. Te va a ofrecer instalar el servicio de
    Windows del API (recomendado) y abrir la app al terminar.
-3. **Antes de usar el botón "Actualizar datos"**: ve a la carpeta de
-   instalación (`{app}\scripts`), copia `.env.example` como `.env` y pega ahí
-   tu API key real de [api-football.com](https://www.api-football.com/).
-   Sin esto el botón falla con un mensaje claro pidiendo la key.
+3. **Antes de usar el botón "Actualizar datos"**: la propia app te avisa si
+   falta la key con un botón "Falta tu API key — configurar" junto al botón
+   de actualizar (en Inicio) — pégala ahí y se guarda sola en
+   `{app}\scripts\.env` (endpoint `POST /api/admin/api-key`). Si prefieres
+   hacerlo a mano: copia `.env.example` como `.env` en esa carpeta y pega tu
+   key real de [api-football.com](https://www.api-football.com/).
 4. La app usa SQLite (el archivo `madrid.db` que trae el instalador con todo
    el histórico ya cargado) — no necesita SQL Server en esa máquina.
 
@@ -53,10 +55,18 @@ Requiere en el equipo nuevo:
 
 - **.NET SDK 10** (`dotnet --version` → `10.0.400` o similar)
 - **Node.js** v20+ (se probó con v24) y npm
-- **SQL Server** (local o accesible) — es la fuente de verdad en desarrollo;
-  la cadena de conexión por defecto está en `api/Program.cs` (~línea 39,
-  `ConnectionStrings:MadridDb` o el fallback embebido) — ajústala si tu SQL
-  Server tiene otro usuario/password/instancia.
+- **SQL Server** (local o accesible) — es la fuente de verdad en desarrollo.
+  La cadena de conexión (`ConnectionStrings:MadridDb`) **ya no vive en el
+  código** (el repo es público) — configúrala una vez por máquina con
+  `dotnet user-secrets set` desde `api/` (el proyecto ya tiene
+  `UserSecretsId` en `Madrid.Api.csproj`):
+  ```bash
+  cd api
+  dotnet user-secrets set "ConnectionStrings:MadridDb" "Server=localhost;Database=MadridHagamosloReal;User Id=sa;Password=TU_PASSWORD;TrustServerCertificate=True;"
+  ```
+  o exporta la variable de entorno `ConnectionStrings__MadridDb` con el mismo
+  valor. Sin esto, `dotnet run` falla al arrancar con un `InvalidOperationException`
+  que explica exactamente qué falta.
 - (Opcional, solo si vas a re-entrenar el modelo o correr los scripts de
   carga histórica) **Python 3.12** + `pip install -r ml-service/requirements.txt`
   — esto es aparte del Python portátil que va DENTRO del instalador, ese no
@@ -100,6 +110,20 @@ Necesitas [Inno Setup 6](https://jrsoftware.org/isinfo.php) instalado
 (`ISCC.exe`, normalmente en
 `%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe`).
 
+Un solo comando hace los 4 pasos (build web → publish API → publish desktop →
+compilar instalador):
+
+```powershell
+.\installer\build.ps1
+```
+
+Si cambiaste los puertos, pásale la URL correcta: `.\installer\build.ps1 -ApiUrl "http://localhost:10001"`.
+
+El resultado queda en `installer/Output/MadridHagamosloReal-Setup.exe`.
+
+<details>
+<summary>Pasos manuales equivalentes (por si necesitas correr uno solo)</summary>
+
 ```bash
 # 1. Build de producción del web (con la URL correcta de la API horneada adentro)
 cd web
@@ -121,8 +145,7 @@ dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=
 cd ../installer
 "$LOCALAPPDATA/Programs/Inno Setup 6/ISCC.exe" MadridHagamosloReal.iss
 ```
-
-El resultado queda en `installer/Output/MadridHagamosloReal-Setup.exe`.
+</details>
 
 **Qué SÍ va dentro del instalable:** WPF+WebView2, API self-contained, build
 de producción del web, `madrid.db` (SQLite con histórico), Python portátil
@@ -173,6 +196,45 @@ sc.exe delete MadridHagamosloRealApi
 
 ---
 
+## Robustez (backups, logs, tests)
+
+**Backups automáticos.** La app de escritorio instalada copia `madrid.db` a
+`%LOCALAPPDATA%\MadridHagamosloReal\Backups\madrid-YYYYMMDD-HHmmss.db` cada
+vez que arranca, antes de levantar la API (`desktop/MainWindow.xaml.cs`,
+`BackupDatabase()`). Guarda los últimos 14 backups y nunca bloquea el
+arranque si falla. Para restaurar uno, cierra la app, reemplaza
+`{app}\data\madrid.db` por el backup elegido, y vuelve a abrir.
+
+**Logs.** La API loguea con Serilog a consola + archivo con rotación diaria
+(14 días). En la app instalada (`DB_PROVIDER=sqlite`):
+`%LOCALAPPDATA%\MadridHagamosloReal\Logs\api-YYYYMMDD.log`. En desarrollo
+(`dotnet run` desde `api/`): `api/bin/Debug/net10.0/logs/api-YYYYMMDD.log`
+(junto al `.dll`, porque ahí vive `AppContext.BaseDirectory` en ese modo).
+Incluye logging de cada request (`UseSerilogRequestLogging`).
+
+**Health check profundo.** `GET /api/health` ya no solo confirma que el
+proceso .NET responde — corre `SELECT 1` contra la base configurada y
+devuelve `503` con el detalle del error si la base no es alcanzable, en vez
+de `200 OK` con una base vacía o inexistente por debajo (el bug real que ya
+documentan los "Gotchas" de abajo).
+
+**Tests.**
+- `api.Tests/` — xUnit + `WebApplicationFactory<Program>` contra un SQLite
+  temporal con datos sembrados a mano (no necesita SQL Server). Corre con
+  `cd api.Tests && dotnet test`. Cubre el cálculo de accuracy/baseline de
+  `/api/dashboard/model-accuracy` y el health check.
+- `ml-service/tests/` — pytest sobre la matemática pura (el predictor Poisson
+  de `compare_baseline_predictor.py` y `rps_3class`/`RESULT_TO_IDX` de
+  `train_model.py`, incluyendo un test que protege contra el bug real ya
+  resuelto de orden de clases alfabético). Corre con:
+  ```bash
+  cd ml-service
+  .venv/Scripts/python.exe -m pip install -r requirements-dev.txt
+  .venv/Scripts/python.exe -m pytest tests/ -v
+  ```
+
+---
+
 ## Referencia rápida de la arquitectura
 
 - `web/` — Next.js 15 (frontend), server components leen la API por SSR y
@@ -186,7 +248,10 @@ sc.exe delete MadridHagamosloRealApi
   para los editores de video/imagen del podcast.
 - `ml-service/` — Python: entrenamiento del modelo (`train/`), scripts de
   carga histórica (`data/fetch_*.py`, requieren SQL Server + pyodbc) y el
-  script liviano de actualización (`data/refresh_current.py`, compatible
-  con SQLite vía `db_sqlite.py`, es el que corre el botón "Actualizar datos").
+  script liviano de actualización (`data/refresh_current.py`, 7 pasos:
+  fixtures, alineaciones/eventos, calificaciones, plantilla, momios y
+  **bajas/sanciones** — este último crea su propia tabla `PlayerAvailability`
+  la primera vez que corre, incluso en una app ya instalada. Compatible con
+  SQLite vía `db_sqlite.py`, es el que corre el botón "Actualizar datos").
 - `installer/` — script de Inno Setup + el Python portátil ya extraído en
   `runtime/python/`.

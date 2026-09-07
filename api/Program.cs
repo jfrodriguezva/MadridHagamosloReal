@@ -2,8 +2,31 @@ using System.Data;
 using Dapper;
 using Microsoft.Data.Sqlite;
 using Microsoft.Data.SqlClient;
+using Serilog;
+
+// Log a archivo con rotación diaria, además de consola -- antes, si algo fallaba en la
+// app instalada (sin consola visible, corriendo como servicio de Windows), no había
+// forma de ver qué pasó sin reproducir el bug a mano. En instalado va a %LOCALAPPDATA%
+// (siempre escribible, mismo criterio que WebView2 en MainWindow.xaml.cs del desktop);
+// en desarrollo, a ./logs junto al proyecto.
+// DB_PROVIDER llega por env var (lanzado desde el desktop) o por --DB_PROVIDER=sqlite
+// (servicio de Windows, ver install-service.ps1) -- se chequea temprano y aparte de la
+// lógica de conexión de más abajo porque el logger se arma antes que "builder".
+var dbProviderForLogs = Environment.GetEnvironmentVariable("DB_PROVIDER")
+    ?? args.FirstOrDefault(a => a.StartsWith("--DB_PROVIDER=", StringComparison.OrdinalIgnoreCase))?[14..]
+    ?? "sqlserver";
+var logDir = dbProviderForLogs.Equals("sqlite", StringComparison.OrdinalIgnoreCase)
+    ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MadridHagamosloReal", "Logs")
+    : Path.Combine(AppContext.BaseDirectory, "logs");
+Log.Logger = new LoggerConfiguration()
+    .MinimumLevel.Information()
+    .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
+    .WriteTo.Console()
+    .WriteTo.File(Path.Combine(logDir, "api-.log"), rollingInterval: RollingInterval.Day, retainedFileCountLimit: 14)
+    .CreateLogger();
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Host.UseSerilog();
 
 // Permite que este mismo .exe corra como Servicio de Windows real (instalado
 // vía install-service.ps1) además de como consola normal en desarrollo --
@@ -44,16 +67,66 @@ if (isSqlite)
 }
 else
 {
+    // Nunca hardcodear la cadena de conexión real aquí -- este repo es público.
+    // En desarrollo: `dotnet user-secrets set "ConnectionStrings:MadridDb" "Server=...;Password=...;"`
+    // dentro de api/ (ya inicializado, ver <UserSecretsId> en Madrid.Api.csproj). También se puede
+    // pasar por la variable de entorno ConnectionStrings__MadridDb.
     var connString = builder.Configuration.GetConnectionString("MadridDb")
-        ?? "Server=localhost;Database=MadridHagamosloReal;User Id=sa;Password=Truper@00;TrustServerCertificate=True;";
+        ?? throw new InvalidOperationException(
+            "Falta ConnectionStrings:MadridDb. Configúrala con 'dotnet user-secrets set " +
+            "\"ConnectionStrings:MadridDb\" \"Server=localhost;Database=MadridHagamosloReal;User Id=...;Password=...;TrustServerCertificate=True;\"' " +
+            "desde la carpeta api/, o con la variable de entorno ConnectionStrings__MadridDb.");
     builder.Services.AddSingleton<Func<IDbConnection>>(() => new SqlConnection(connString));
 }
 
 var app = builder.Build();
 
 app.UseCors();
+app.UseSerilogRequestLogging();
 
-app.MapGet("/api/health", () => Results.Ok(new { status = "ok" }));
+// Racha de forma reciente (W/D/L) del Real Madrid, en orden cronológico (más viejo -> más
+// nuevo) para leerse como una línea de tiempo. Reutilizada por dashboard/next-match y por
+// predictions/next/full -- un solo lugar que sabe calcular "racha" en vez de duplicar el SQL.
+async Task<List<string>> RecentForm(IDbConnection conn, int count = 5)
+{
+    var rows = await conn.QueryAsync<dynamic>(
+        $"""
+        SELECT {Top(count)} HomeTeamId AS homeTeamId, AwayTeamId AS awayTeamId, HomeGoals AS homeGoals, AwayGoals AS awayGoals
+        FROM Fixtures
+        WHERE (HomeTeamId = @rm OR AwayTeamId = @rm) AND StatusShort = 'FT'
+        ORDER BY KickoffUtc DESC
+        {Limit(count)}
+        """, new { rm = RealMadridId });
+
+    string Outcome(dynamic r)
+    {
+        bool rmHome = (int)r.homeTeamId == RealMadridId;
+        int rmGoals = rmHome ? (int)r.homeGoals : (int)r.awayGoals;
+        int oppGoals = rmHome ? (int)r.awayGoals : (int)r.homeGoals;
+        return rmGoals > oppGoals ? "W" : rmGoals < oppGoals ? "L" : "D";
+    }
+
+    return rows.Select(r => Outcome(r)).Reverse().ToList();
+}
+
+// Chequeo profundo: antes solo confirmaba que el proceso .NET respondía, no que la
+// base de datos configurada era alcanzable -- exactamente el hueco que causó el bug
+// ya documentado en RECOVERY.md (servicio "Running" con DB vacía/inexistente, portal
+// cargaba sin datos y sin ningún error visible). 503 en vez de 200 cuando la DB falla
+// para que cualquier chequeo externo (o el propio shell de escritorio) lo note de una.
+app.MapGet("/api/health", async (Func<IDbConnection> factory) =>
+{
+    try
+    {
+        using var conn = factory();
+        await conn.ExecuteScalarAsync<int>("SELECT 1");
+        return Results.Ok(new { status = "ok", db = "ok" });
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(new { status = "degraded", db = "error", detail = ex.Message }, statusCode: 503);
+    }
+});
 
 // Nota: Dapper devuelve <dynamic> como diccionarios que preservan el alias
 // SQL tal cual -- por eso los alias van en camelCase aquí, para que el JSON
@@ -76,7 +149,12 @@ app.MapGet("/api/dashboard/next-match", async (Func<IDbConnection> factory) =>
         {Limit(1)}
         """, new { rm = RealMadridId });
 
-    return match is null ? Results.NotFound() : Results.Ok(match);
+    if (match is null) return Results.NotFound();
+
+    var recentForm = await RecentForm(conn);
+    var result = (IDictionary<string, object>)match!;
+    result["recentForm"] = recentForm;
+    return Results.Ok(result);
 });
 
 app.MapGet("/api/dashboard/calendar", async (Func<IDbConnection> factory, int pastCount, int futureCount) =>
@@ -134,7 +212,33 @@ app.MapGet("/api/dashboard/model-accuracy", async (Func<IDbConnection> factory) 
         AND f.FixtureId IN (SELECT {Top(12)} FixtureId FROM Fixtures
             WHERE (HomeTeamId = @rm OR AwayTeamId = @rm) AND StatusShort = 'FT' ORDER BY KickoffUtc DESC {Limit(12)})
         """, new { rm = RealMadridId });
-    return Results.Ok(new { overall = stats, last12 = recent });
+    // Baseline honesto: como Predictions solo tiene partidos del Real Madrid (nunca se
+    // generan predicciones para el resto de la liga), el punto de comparación que
+    // corresponde es "predecir siempre que gana el Real Madrid" -- no "gana el local"
+    // (el Madrid juega la mitad de local y la mitad de visita). Coincide con el
+    // comparador que ya existe en ml-service/train/compare_baseline_predictor.py
+    // ("SOLO REAL MADRID"), esto solo lo trae al dashboard para no vivir únicamente en
+    // un script que hay que correr a mano.
+    var favoriteBaseline = await conn.QuerySingleAsync<dynamic>(
+        """
+        SELECT COUNT(*) AS total,
+               SUM(CASE WHEN (f.HomeTeamId = @rm AND p.ActualOutcome = 'H')
+                          OR (f.AwayTeamId = @rm AND p.ActualOutcome = 'A') THEN 1 ELSE 0 END) AS correct
+        FROM Predictions p JOIN Fixtures f ON p.FixtureId = f.FixtureId
+        WHERE p.Market = '1X2' AND p.ActualOutcome IS NOT NULL
+        """, new { rm = RealMadridId });
+    // Calibración del modelo activo -- no solo si acierta, sino si sus probabilidades
+    // son honestas (log loss / brier), ya se calcula en train_model.py y se guarda en
+    // PredictionModels pero hasta ahora nunca se leía desde la API.
+    var activeModel = await conn.QuerySingleOrDefaultAsync<dynamic>(
+        $"""
+        SELECT {Top(1)} Algorithm AS algorithm, Version AS version, ValAccuracy AS valAccuracy,
+               ValLogLoss AS valLogLoss, ValBrier AS valBrier, TrainedAtUtc AS trainedAtUtc
+        FROM PredictionModels WHERE Market = '1X2' AND IsActive = 1
+        ORDER BY ModelId DESC
+        {Limit(1)}
+        """);
+    return Results.Ok(new { overall = stats, last12 = recent, favoriteBaseline, activeModel });
 });
 
 app.MapGet("/api/predictions/{fixtureId:int}", async (Func<IDbConnection> factory, int fixtureId) =>
@@ -170,7 +274,28 @@ app.MapGet("/api/predictions/next/full", async (Func<IDbConnection> factory) =>
     var over25 = await conn.QuerySingleOrDefaultAsync<dynamic>(
         "SELECT ProbYes AS probYes FROM Predictions WHERE FixtureId=@id AND Market='OVER25'", new { id = fixtureId });
 
-    return Results.Ok(new { match, x12, btts, over25 });
+    int opponentId = (int)match.homeTeamId == RealMadridId ? (int)match.awayTeamId : (int)match.homeTeamId;
+    var h2hSummary = await conn.QuerySingleAsync<dynamic>(
+        """
+        SELECT COUNT(*) AS total,
+               SUM(CASE WHEN (HomeTeamId=@rm AND HomeGoals>AwayGoals) OR (AwayTeamId=@rm AND AwayGoals>HomeGoals) THEN 1 ELSE 0 END) AS wins,
+               SUM(CASE WHEN HomeGoals=AwayGoals THEN 1 ELSE 0 END) AS draws,
+               SUM(CASE WHEN (HomeTeamId=@rm AND HomeGoals<AwayGoals) OR (AwayTeamId=@rm AND AwayGoals<HomeGoals) THEN 1 ELSE 0 END) AS losses
+        FROM Fixtures
+        WHERE ((HomeTeamId=@rm AND AwayTeamId=@opp) OR (HomeTeamId=@opp AND AwayTeamId=@rm)) AND StatusShort='FT'
+        """, new { rm = RealMadridId, opp = opponentId });
+    var h2hRecent = await conn.QueryAsync<dynamic>(
+        $"""
+        SELECT {Top(5)} f.KickoffUtc AS kickoffUtc, f.CompetitionType AS competitionType,
+               f.HomeTeamId AS homeTeamId, f.AwayTeamId AS awayTeamId, f.HomeGoals AS homeGoals, f.AwayGoals AS awayGoals
+        FROM Fixtures f
+        WHERE ((f.HomeTeamId=@rm AND f.AwayTeamId=@opp) OR (f.HomeTeamId=@opp AND f.AwayTeamId=@rm)) AND f.StatusShort='FT'
+        ORDER BY f.KickoffUtc DESC
+        {Limit(5)}
+        """, new { rm = RealMadridId, opp = opponentId });
+    var recentForm = await RecentForm(conn);
+
+    return Results.Ok(new { match, x12, btts, over25, recentForm, h2h = new { summary = h2hSummary, recent = h2hRecent } });
 });
 
 app.MapGet("/api/players", async (Func<IDbConnection> factory, string? position) =>
@@ -210,6 +335,49 @@ app.MapGet("/api/players/{playerId:int}", async (Func<IDbConnection> factory, in
         WHERE p.PlayerId = @playerId
         """, new { playerId });
     return player is null ? Results.NotFound() : Results.Ok(player);
+});
+
+// Bajas y dudas (lesión/sanción) -- API-Football no manda un flag limpio de
+// "todavía afuera hoy", así que se aproxima el estado actual quedándose con el
+// registro más reciente por jugador entre 14 días atrás y 21 días adelante de hoy
+// (cubre lesiones que se anunciaron hace poco y sanciones ya conocidas para próximos
+// partidos). El filtro de fecha se hace en C#, no en SQL, porque KickoffUtc se guarda
+// como TEXT en SQLite -- comparar rangos de fecha como texto entre motores distintos
+// es frágil; en memoria son unos pocos registros, no vale la pena el riesgo.
+app.MapGet("/api/players/availability", async (Func<IDbConnection> factory) =>
+{
+    using var conn = factory();
+    List<dynamic> rows;
+    try
+    {
+        rows = (await conn.QueryAsync<dynamic>(
+            """
+            SELECT pa.PlayerId AS playerId, p.Name AS name, pa.Type AS type, pa.Reason AS reason,
+                   f.FixtureId AS fixtureId, f.KickoffUtc AS kickoffUtc
+            FROM PlayerAvailability pa
+            JOIN Players p ON pa.PlayerId = p.PlayerId
+            JOIN Fixtures f ON pa.FixtureId = f.FixtureId
+            WHERE p.TeamId = @rm
+            """, new { rm = RealMadridId })).ToList();
+    }
+    catch
+    {
+        // La tabla se crea sola la primera vez que corre "Actualizar datos" (o al
+        // aplicar ml-service/sql/005_availability.sql en dev) -- si todavía no
+        // existe, no hay bajas que mostrar, no es un error real.
+        return Results.Ok(Array.Empty<object>());
+    }
+
+    var now = DateTime.UtcNow;
+    var current = rows
+        .Select(r => new { r, kickoff = Convert.ToDateTime(r.kickoffUtc) })
+        .Where(x => (now - x.kickoff).TotalDays >= -21 && (now - x.kickoff).TotalDays <= 14)
+        .OrderByDescending(x => x.kickoff)
+        .GroupBy(x => (int)x.r.playerId)
+        .Select(g => g.First().r)
+        .ToList();
+
+    return Results.Ok(current);
 });
 
 app.MapGet("/api/lineups/next", async (Func<IDbConnection> factory) =>
@@ -755,7 +923,7 @@ app.MapGet("/api/podcast/suggestions/{fixtureId:int}", async (Func<IDbConnection
     using var conn = factory();
     var match = await conn.QuerySingleOrDefaultAsync<dynamic>(
         """
-        SELECT f.HomeGoals AS homeGoals, f.AwayGoals AS awayGoals, f.CompetitionType AS competitionType,
+        SELECT f.HomeGoals AS homeGoals, f.AwayGoals AS awayGoals, f.CompetitionType AS competitionType, f.Season AS season,
                CASE WHEN f.HomeTeamId=@rm THEN at.Name ELSE ht.Name END AS opponent,
                CASE WHEN f.HomeTeamId=@rm THEN 1 ELSE 0 END AS isHome
         FROM Fixtures f JOIN Teams ht ON f.HomeTeamId=ht.TeamId JOIN Teams at ON f.AwayTeamId=at.TeamId
@@ -777,7 +945,11 @@ app.MapGet("/api/podcast/suggestions/{fixtureId:int}", async (Func<IDbConnection
         $"Real Madrid {resultWord} ante {opponent} — {comp}",
         $"Los 5 momentos clave del Real Madrid {rmGoals}-{oppGoals} {opponent}",
         $"Real Madrid vs {opponent}: lo que las estadísticas no te dijeron",
-        $"{opponent} {oppGoals}-{rmGoals} Real Madrid — análisis sin filtro" ,
+        $"{opponent} {oppGoals}-{rmGoals} Real Madrid — análisis sin filtro",
+        $"Real Madrid {rmGoals}-{oppGoals} {opponent}: la verdad detrás del marcador",
+        $"3 cosas que cambian de cara al siguiente partido tras el {rmGoals}-{oppGoals} ante {opponent}",
+        $"Real Madrid vs {opponent}: quién ganó y quién perdió el partido individual",
+        $"¿{(resultWord.ToLower() == "gana" ? "Victoria merecida" : resultWord.ToLower() == "empata" ? "Empate justo" : "Derrota inmerecida")}? Real Madrid {rmGoals}-{oppGoals} {opponent}",
     };
     var titles = titlePool.OrderBy(_ => rnd.Next()).Take(3).ToList();
 
@@ -785,7 +957,7 @@ app.MapGet("/api/podcast/suggestions/{fixtureId:int}", async (Func<IDbConnection
     {
         "#RealMadrid", "#HalaMadrid", $"#{opponent.Replace(" ", "")}",
         match.competitionType == "UCL" ? "#UCL" : "#LaLiga", "#Futbol", "#ElClasico",
-        "#LaLigaEA", "#RMCF", "#FutbolEspañol", "#MatchDay",
+        "#LaLigaEA", "#RMCF", "#FutbolEspañol", "#MatchDay", "#RealMadridCF", "#Podcast",
     };
     var hashtags = hashtagPool.Distinct().OrderBy(_ => rnd.Next()).Take(6).ToList();
 
@@ -794,53 +966,123 @@ app.MapGet("/api/podcast/suggestions/{fixtureId:int}", async (Func<IDbConnection
         new { id = fixtureId })).Where(g => (int)g.teamId == RealMadridId).ToList();
 
     var ratings = (await conn.QueryAsync<dynamic>(
-        "SELECT p.Name AS name, mr.AiRating AS aiRating FROM MatchPlayerRatings mr JOIN Players p ON mr.PlayerId=p.PlayerId WHERE mr.FixtureId=@id ORDER BY mr.AiRating DESC",
+        "SELECT p.PlayerId AS playerId, p.Name AS name, mr.AiRating AS aiRating FROM MatchPlayerRatings mr JOIN Players p ON mr.PlayerId=p.PlayerId WHERE mr.FixtureId=@id ORDER BY mr.AiRating DESC",
         new { id = fixtureId })).ToList();
 
     string Pick(params string[] opts) => opts[rnd.Next(opts.Length)];
 
-    var talkingPoints = new List<string>
-    {
-        Pick(
+    var talkingPoints = new List<string>();
+    var opener = Pick(
             $"Arranca contando el resultado: Real Madrid {resultWord.ToLower()} {rmGoals}-{oppGoals} frente a {opponent} en {comp}.",
             $"Abre fuerte: {rmGoals}-{oppGoals} ante {opponent}, {comp} — di de entrada si el marcador reflejó lo que pasó en la cancha o no.",
-            $"Contexto rápido antes de entrar al detalle: {comp}, Real Madrid {resultWord.ToLower()} {rmGoals}-{oppGoals} contra {opponent}."
-        ),
-    };
+            $"Contexto rápido antes de entrar al detalle: {comp}, Real Madrid {resultWord.ToLower()} {rmGoals}-{oppGoals} contra {opponent}.",
+            $"Sin rodeos: {rmGoals}-{oppGoals} contra {opponent} en {comp}. Ahora sí, vamos al porqué.",
+            $"Dato duro primero, opinión después: {rmGoals}-{oppGoals} ante {opponent} ({comp}). Lo demás se explica solo con la cancha.",
+            $"El titular es {rmGoals}-{oppGoals} ante {opponent}, pero el episodio de hoy va de lo que ese marcador no cuenta."
+    );
     if (goals.Count > 0)
     {
         var scorers = string.Join(", ", goals.Select(g => (string)g.playerName));
         talkingPoints.Add(Pick(
             $"Menciona quién anotó: {scorers}. Vale la pena describir la jugada del primer gol con más detalle, es lo que más recuerda la gente.",
             $"Repasa los goles en orden ({scorers}) y elige UNO para analizar jugada por jugada — no los trates todos igual.",
-            $"Los goleadores fueron {scorers}. Pregúntate en voz alta: ¿fue mérito individual o construcción colectiva?"
+            $"Los goleadores fueron {scorers}. Pregúntate en voz alta: ¿fue mérito individual o construcción colectiva?",
+            $"{scorers} se repartieron los goles — di cuál te gustó más a nivel futbolístico, no solo el más importante en el marcador.",
+            $"Antes de pasar de página: {scorers} anotaron. ¿Alguno rompió una sequía o venía de racha? Eso también es la noticia."
         ));
+
+        var assists = goals.Where(g => g.assistPlayerName != null).Select(g => (string)g.assistPlayerName).Distinct().ToList();
+        if (assists.Count > 0)
+        {
+            var assistList = string.Join(", ", assists);
+            talkingPoints.Add(Pick(
+                $"No te saltes las asistencias: {assistList}. Un gol se cuenta con el que la mete, pero el episodio se enriquece con el que la dio.",
+                $"Dale crédito aparte a {assistList} en la asistencia — separa mentalmente ejecución de construcción de la jugada.",
+                $"{assistList} aparece en las asistencias del partido. Vale la pena reconstruir esa jugada en voz alta, minuto a minuto."
+            ));
+        }
     }
     if (ratings.Count > 0)
     {
         talkingPoints.Add(Pick(
             $"Destaca a {ratings[0].name} como la figura del partido (mejor calificación real: {ratings[0].aiRating}) — explica qué hizo diferente.",
             $"{ratings[0].name} fue el mejor calificado ({ratings[0].aiRating}) — dale 30-40 segundos exclusivos, con un ejemplo concreto de su partido.",
-            $"No des por sentado que {ratings[0].name} fue el mejor solo porque el dato lo dice ({ratings[0].aiRating}) — argumenta si estás de acuerdo o no."
+            $"No des por sentado que {ratings[0].name} fue el mejor solo porque el dato lo dice ({ratings[0].aiRating}) — argumenta si estás de acuerdo o no.",
+            $"{ratings[0].name} lideró las calificaciones con {ratings[0].aiRating} — compáralo con su rendimiento en los últimos partidos, ¿es su techo o ya es su nivel normal?",
+            $"Arranca el bloque de individuales por {ratings[0].name} ({ratings[0].aiRating}), el mejor calificado — y explica con un ejemplo concreto por qué."
         ));
         if (ratings.Count > 1)
-            talkingPoints.Add(Pick(
-                $"Sé honesto sobre el más flojo, {ratings[^1].name} ({ratings[^1].aiRating}) — el análisis crítico es lo que distingue a un buen podcast de uno de solo elogios.",
-                $"Toca el punto incómodo: {ratings[^1].name} tuvo la calificación más baja ({ratings[^1].aiRating}). Sé justo, no cruel — contexto antes que crítica.",
-                $"Pregunta abierta para la audiencia: ¿{ratings[^1].name} ({ratings[^1].aiRating}) tuvo mala suerte o mal partido de verdad?"
-            ));
+        {
+            // Comparar contra el promedio de temporada del propio jugador (no solo contra sus
+            // compañeros de hoy) da un gancho editorial mejor: "su peor partido en N jornadas"
+            // pega más que "el más bajo de hoy", que es cierto pero poco interesante por sí solo.
+            int worstPlayerId = (int)ratings[^1].playerId;
+            var seasonAvg = await conn.QuerySingleOrDefaultAsync<decimal?>(
+                """
+                SELECT AVG(mr.AiRating) FROM MatchPlayerRatings mr
+                JOIN Fixtures f ON mr.FixtureId = f.FixtureId
+                WHERE mr.PlayerId=@pid AND f.Season=@season AND mr.FixtureId<>@id
+                """, new { pid = worstPlayerId, season = (int)match.season, id = fixtureId });
+
+            if (seasonAvg is decimal avg && Math.Abs((decimal)ratings[^1].aiRating - avg) >= 0.5m)
+            {
+                var delta = ((decimal)ratings[^1].aiRating - avg).ToString("0.0");
+                talkingPoints.Add(Pick(
+                    $"{ratings[^1].name} sacó {ratings[^1].aiRating}, bien por debajo de su promedio de temporada ({avg:0.0}) — dile a la audiencia si fue un mal día puntual o algo que ya venías notando.",
+                    $"No es solo 'el más bajo de hoy': {ratings[^1].name} está {delta} puntos por debajo de su propio promedio de temporada ({avg:0.0}). Eso sí es una historia.",
+                    $"Compara: {ratings[^1].name} promedia {avg:0.0} en la temporada y hoy sacó {ratings[^1].aiRating} — ¿lesión, cansancio, o simplemente mal partido?"
+                ));
+            }
+            else
+            {
+                talkingPoints.Add(Pick(
+                    $"Sé honesto sobre el más flojo, {ratings[^1].name} ({ratings[^1].aiRating}) — el análisis crítico es lo que distingue a un buen podcast de uno de solo elogios.",
+                    $"Toca el punto incómodo: {ratings[^1].name} tuvo la calificación más baja ({ratings[^1].aiRating}). Sé justo, no cruel — contexto antes que crítica.",
+                    $"Pregunta abierta para la audiencia: ¿{ratings[^1].name} ({ratings[^1].aiRating}) tuvo mala suerte o mal partido de verdad?",
+                    $"{ratings[^1].name} cerró con la calificación más baja ({ratings[^1].aiRating}) — dile a la audiencia si fue un problema puntual o algo que ya venías notando.",
+                    $"No cierres el bloque de individuales sin mencionar a {ratings[^1].name} ({ratings[^1].aiRating}) — el silencio sobre el más flojo también se nota."
+                ));
+            }
+        }
     }
     talkingPoints.Add(Pick(
         "Cierra con una línea sobre el próximo rival y qué esperar — deja al oyente con una razón para volver al siguiente episodio.",
         "Termina con una predicción corta y arriesgada sobre el siguiente partido — genera conversación en los comentarios.",
-        "Cierra pidiendo la opinión de la audiencia: ¿qué calificación le pondrían ustedes al partido del 1 al 10?"
+        "Cierra pidiendo la opinión de la audiencia: ¿qué calificación le pondrían ustedes al partido del 1 al 10?",
+        "Remata invitando a comentar con un dato concreto: pide que voten quién fue el MVP del partido para ustedes.",
+        "Cierra mirando hacia adelante: qué tendría que cambiar (o repetirse) en el próximo partido para que el resultado sea distinto."
     ));
+    // el punto de apertura (resultado) siempre va primero, sin importar el barajado del resto --
+    // se guarda aparte desde su creación en vez de re-detectarlo por texto (frágil con más variantes)
     talkingPoints = talkingPoints.OrderBy(_ => rnd.Next()).ToList();
-    // el primer punto (resultado) siempre debe ir primero, sin importar el barajado
-    var opener = talkingPoints.FirstOrDefault(t => t.Contains(resultWord.ToLower()) || t.Contains(comp));
-    if (opener != null) { talkingPoints.Remove(opener); talkingPoints.Insert(0, opener); }
+    talkingPoints.Insert(0, opener);
 
-    return Results.Ok(new { titles, hashtags, talkingPoints });
+    // Guion con tiempos aproximados -- un orden sugerido ayuda más al grabar que una
+    // lista plana de puntos sueltos. Los minutos son una guía, no una regla fija.
+    var outline = new List<object>
+    {
+        new { block = "Intro", minutes = 1, note = "Encuadre rápido: rival, competición, resultado." },
+        new { block = "Resultado", minutes = 2, note = "El punto de apertura de arriba." },
+        new { block = "Individuales", minutes = 5, note = "Mejor y peor calificado, goles y asistencias." },
+        new { block = "Cierre", minutes = 2, note = "El último punto de la lista, mirando al próximo partido." },
+    };
+
+    // Clips cortos sugeridos para redes (Reels/Shorts/TikTok) a partir de los goles reales
+    // del partido -- usa el mismo dato de minuto que ya se consultaba para MatchEvents2 y
+    // que hasta ahora solo se usaba para el talking point, no para sugerir recortes.
+    var clipSuggestions = goals.Select(g =>
+    {
+        int minute = (int)g.minute;
+        int from = Math.Max(0, minute - 1);
+        return new
+        {
+            label = $"Gol de {(string)g.playerName} (min. {minute})",
+            fromMinute = from,
+            toMinute = minute + 1,
+        };
+    }).ToList();
+
+    return Results.Ok(new { titles, hashtags, talkingPoints, outline, clipSuggestions });
 });
 
 app.MapGet("/api/matches/{fixtureId:int}/detail", async (Func<IDbConnection> factory, int fixtureId) =>
@@ -980,6 +1222,7 @@ app.MapPost("/api/admin/refresh-data", () =>
     var appRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, ".."));
     var pythonExe = Path.Combine(appRoot, "runtime", "python", "python.exe");
     var scriptPath = Path.Combine(appRoot, "scripts", "refresh_current.py");
+    var envPath = Path.Combine(appRoot, "scripts", ".env");
 
     if (!File.Exists(pythonExe) || !File.Exists(scriptPath))
     {
@@ -989,6 +1232,21 @@ app.MapPost("/api/admin/refresh-data", () =>
             refreshState.Finished = true;
             refreshState.ExitCode = -1;
             refreshState.Log.Add("No se encontró el Python portátil o el script -- ¿está instalado desde el instalador oficial?");
+        }
+        return Results.Ok(new { started = true });
+    }
+
+    // Chequeo previo en vez de dejar que el script Python truene con un KeyError crudo --
+    // mismo resultado (no arranca), pero con un mensaje que el usuario puede accionar de una:
+    // pegar su key en /podcast (ver POST /api/admin/api-key) en vez de leer un traceback.
+    if (!HasRealApiKey(envPath))
+    {
+        lock (refreshState)
+        {
+            refreshState.Running = false;
+            refreshState.Finished = true;
+            refreshState.ExitCode = -1;
+            refreshState.Log.Add("Falta tu API key de api-football.com. Guárdala desde el aviso en pantalla o pégala en scripts\\.env y vuelve a intentar.");
         }
         return Results.Ok(new { started = true });
     }
@@ -1036,6 +1294,55 @@ app.MapGet("/api/admin/refresh-status", () =>
     }
 });
 
+// Detecta si scripts\.env ya tiene una API key real (no la plantilla) sin necesitar
+// arrancar el Python portátil -- deja al frontend avisar de una vez en vez de que el
+// usuario se entere recién al presionar "Actualizar datos" y ver un log de error.
+bool HasRealApiKey(string envPath)
+{
+    if (!File.Exists(envPath)) return false;
+    foreach (var line in File.ReadAllLines(envPath))
+    {
+        var trimmed = line.Trim();
+        if (!trimmed.StartsWith("API_FOOTBALL_KEY=")) continue;
+        var value = trimmed["API_FOOTBALL_KEY=".Length..].Trim();
+        return value.Length > 0 && value != "pega-aqui-tu-api-key";
+    }
+    return false;
+}
+
+app.MapGet("/api/admin/api-key-status", () =>
+{
+    if (!isSqlite) return Results.Ok(new { applicable = false, configured = true });
+    var envPath = Path.Combine(AppContext.BaseDirectory, "..", "scripts", ".env");
+    return Results.Ok(new { applicable = true, configured = HasRealApiKey(envPath) });
+});
+
+// Guarda la API key de api-football.com en scripts\.env sin que el usuario tenga que
+// navegar carpetas de instalación a mano -- solo aplica a la app instalada (SQLite);
+// en desarrollo la key se sigue pegando directamente en ml-service/.env.
+app.MapPost("/api/admin/api-key", (ApiKeyRequest req) =>
+{
+    if (!isSqlite) return Results.BadRequest(new { error = "Solo disponible en la app instalada (SQLite)." });
+    var key = req.ApiKey?.Trim() ?? "";
+    if (key.Length == 0) return Results.BadRequest(new { error = "La API key no puede estar vacía." });
+
+    var scriptsDir = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "scripts"));
+    var envPath = Path.Combine(scriptsDir, ".env");
+    var envExamplePath = Path.Combine(scriptsDir, ".env.example");
+
+    var lines = (File.Exists(envPath) ? File.ReadAllLines(envPath)
+        : File.Exists(envExamplePath) ? File.ReadAllLines(envExamplePath)
+        : new[] { "API_FOOTBALL_KEY=", "API_FOOTBALL_BASE=https://v3.football.api-sports.io", "REAL_MADRID_TEAM_ID=541", "LALIGA_LEAGUE_ID=140" }).ToList();
+
+    var idx = lines.FindIndex(l => l.TrimStart().StartsWith("API_FOOTBALL_KEY="));
+    if (idx >= 0) lines[idx] = $"API_FOOTBALL_KEY={key}";
+    else lines.Insert(0, $"API_FOOTBALL_KEY={key}");
+
+    Directory.CreateDirectory(scriptsDir);
+    File.WriteAllLines(envPath, lines);
+    return Results.Ok(new { saved = true });
+});
+
 app.Run();
 
 record SaveLineupRequest(int FixtureId, string Formation, List<LineupSlot> Slots);
@@ -1043,6 +1350,7 @@ record RatingRequest(int FixtureId, int PlayerId, decimal Rating, string? Review
 record PodcastLogRequest(int FixtureId, string Title, string EpisodeLabel, string YoutubeLink);
 record LineupSlot(string SlotPosition, int PlayerId);
 record MediaLogRequest(string Kind, string FileName, int? FixtureId);
+record ApiKeyRequest(string ApiKey);
 
 class RefreshState
 {
@@ -1051,3 +1359,8 @@ class RefreshState
     public int? ExitCode;
     public List<string> Log = new();
 }
+
+// Necesario para que WebApplicationFactory<Program> (api.Tests) pueda arrancar la app
+// en proceso -- con top-level statements, la clase Program que el compilador genera es
+// internal por defecto y no se puede referenciar desde otro assembly sin esto.
+public partial class Program { }

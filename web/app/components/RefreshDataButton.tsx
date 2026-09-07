@@ -17,10 +17,52 @@ export default function RefreshDataButton() {
   const [status, setStatus] = useState<RefreshStatus | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  const [keyConfigured, setKeyConfigured] = useState(true);
+  const [showKeyForm, setShowKeyForm] = useState(false);
+  const [apiKeyInput, setApiKeyInput] = useState("");
+  const [savingKey, setSavingKey] = useState(false);
+  const [keyMessage, setKeyMessage] = useState<string | null>(null);
+
+  function checkKeyStatus() {
+    fetch(`${API}/api/admin/api-key-status`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setKeyConfigured(d ? d.configured : true))
+      .catch(() => setKeyConfigured(true));
+  }
+
+  async function saveApiKey() {
+    if (!apiKeyInput.trim()) return;
+    setSavingKey(true);
+    setKeyMessage(null);
+    try {
+      const res = await fetch(`${API}/api/admin/api-key`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ apiKey: apiKeyInput.trim() }),
+      });
+      if (res.ok) {
+        setKeyMessage("Guardada. Ya puedes actualizar datos.");
+        setApiKeyInput("");
+        setShowKeyForm(false);
+        checkKeyStatus();
+      } else {
+        const d = await res.json();
+        setKeyMessage(d.error ?? "No se pudo guardar la key.");
+      }
+    } catch {
+      setKeyMessage("No se pudo contactar la API.");
+    } finally {
+      setSavingKey(false);
+    }
+  }
+
   useEffect(() => {
     fetch(`${API}/api/admin/db-provider`)
       .then((r) => (r.ok ? r.json() : null))
-      .then((d) => setVisible(d?.provider === "sqlite"))
+      .then((d) => {
+        setVisible(d?.provider === "sqlite");
+        if (d?.provider === "sqlite") checkKeyStatus();
+      })
       .catch(() => setVisible(false));
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
@@ -64,7 +106,50 @@ export default function RefreshDataButton() {
   const running = status?.running ?? false;
 
   return (
-    <div className="relative">
+    <div className="relative flex items-center gap-2">
+      {!keyConfigured && (
+        <div className="relative">
+          <button
+            onClick={() => setShowKeyForm((s) => !s)}
+            className="font-mono text-[10.5px] px-3 py-2 rounded-lg border"
+            style={{ background: "var(--bad-soft, transparent)", borderColor: "var(--bad)", color: "var(--bad)" }}
+          >
+            FALTA TU API KEY — CONFIGURAR
+          </button>
+          {showKeyForm && (
+            <div
+              className="absolute right-0 mt-2 w-80 rounded-lg border p-3 text-xs z-20 shadow-lg flex flex-col gap-2"
+              style={{ background: "var(--surface)", borderColor: "var(--line)" }}
+            >
+              <p style={{ color: "var(--muted)" }}>
+                Pega tu API key de{" "}
+                <a href="https://www.api-football.com/" target="_blank" rel="noreferrer" style={{ color: "var(--purple)" }}>
+                  api-football.com
+                </a>{" "}
+                — se guarda solo en este equipo, en <code>scripts\.env</code>.
+              </p>
+              <input
+                value={apiKeyInput}
+                onChange={(e) => setApiKeyInput(e.target.value)}
+                placeholder="Tu API key"
+                type="password"
+                className="rounded-md border px-2.5 py-1.5 text-xs outline-none"
+                style={{ borderColor: "var(--line)" }}
+              />
+              <button
+                onClick={saveApiKey}
+                disabled={savingKey || !apiKeyInput.trim()}
+                className="font-mono text-[10.5px] px-3 py-1.5 rounded-md font-bold disabled:opacity-50"
+                style={{ background: "var(--gold)", color: "#1a1a24" }}
+              >
+                {savingKey ? "GUARDANDO…" : "GUARDAR API KEY"}
+              </button>
+              {keyMessage && <p style={{ color: "var(--muted)" }}>{keyMessage}</p>}
+            </div>
+          )}
+        </div>
+      )}
+
       <button
         onClick={handleClick}
         disabled={running}

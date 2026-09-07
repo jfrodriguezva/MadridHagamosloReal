@@ -17,6 +17,7 @@ type NextMatch = {
   probHome: number | null;
   probDraw: number | null;
   probAway: number | null;
+  recentForm?: ("W" | "D" | "L")[];
 };
 
 type CalendarMatch = {
@@ -71,9 +72,12 @@ export default async function DashboardPage() {
     getJson<{ past: CalendarMatch[]; future: CalendarMatch[] }>(
       "/api/dashboard/calendar?pastCount=6&futureCount=4"
     ),
-    getJson<{ overall: { total: number; correct: number }; last12: { total: number; correct: number } }>(
-      "/api/dashboard/model-accuracy"
-    ),
+    getJson<{
+      overall: { total: number; correct: number };
+      last12: { total: number; correct: number };
+      favoriteBaseline: { total: number; correct: number };
+      activeModel: { algorithm: string; version: string; valAccuracy: number | null; valLogLoss: number | null; valBrier: number | null } | null;
+    }>("/api/dashboard/model-accuracy"),
   ]);
 
   const rival = next ? (isRMHome(next) ? next.awayTeam : next.homeTeam) : null;
@@ -85,6 +89,11 @@ export default async function DashboardPage() {
   const overallPct = accuracy?.overall?.total
     ? Math.round((accuracy.overall.correct / accuracy.overall.total) * 1000) / 10
     : null;
+  const baselinePct = accuracy?.favoriteBaseline?.total
+    ? Math.round((accuracy.favoriteBaseline.correct / accuracy.favoriteBaseline.total) * 1000) / 10
+    : null;
+  const edgeOverBaseline =
+    overallPct != null && baselinePct != null ? Math.round((overallPct - baselinePct) * 10) / 10 : null;
 
   // Diferencia en días de calendario (no horas exactas) -- si faltan 2 días y 3 horas
   // son "2 días", no 3, así que se comparan las fechas sin la hora.
@@ -170,6 +179,28 @@ export default async function DashboardPage() {
                     <span className="text-sm font-semibold">{next.awayTeam}</span>
                   </div>
                 </div>
+                {next.recentForm && next.recentForm.length > 0 && (
+                  <div className="flex items-center gap-2 mt-4 pt-3" style={{ borderTop: "1px solid rgba(255,255,255,.12)" }}>
+                    <span className="font-mono text-[10px] tracking-wider" style={{ color: "#c9c5df" }}>
+                      RACHA
+                    </span>
+                    <div className="flex gap-1">
+                      {next.recentForm.map((r, i) => (
+                        <span
+                          key={i}
+                          className="w-5 h-5 rounded-full flex items-center justify-center font-mono text-[10px] font-bold"
+                          style={{
+                            background: r === "W" ? "var(--good)" : r === "L" ? "var(--bad)" : "rgba(255,255,255,.25)",
+                            color: "#fff",
+                          }}
+                          title={r === "W" ? "Ganó" : r === "L" ? "Perdió" : "Empató"}
+                        >
+                          {r}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </>
             ) : (
               <p className="text-sm text-[#c9c5df]">No hay próximo partido programado en la base.</p>
@@ -224,13 +255,33 @@ export default async function DashboardPage() {
 
         {/* KPI STRIP */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <Kpi label="Acierto histórico" value={overallPct != null ? `${overallPct}%` : "—"} />
+          <Kpi
+            label="Acierto histórico"
+            value={overallPct != null ? `${overallPct}%` : "—"}
+            sub={
+              edgeOverBaseline != null
+                ? `${edgeOverBaseline >= 0 ? "+" : ""}${edgeOverBaseline} pts vs. predecir siempre que gana el Madrid`
+                : undefined
+            }
+          />
           <Kpi
             label="Últimos 12 partidos"
             value={accuracy?.last12 ? `${accuracy.last12.correct}/${accuracy.last12.total}` : "—"}
           />
           <Kpi label="Muestra validada" value={accuracy?.overall ? `${accuracy.overall.total} partidos` : "—"} />
-          <Kpi label="Modelo activo" value="Ensemble v2.0" accent />
+          <Kpi
+            label="Modelo activo"
+            value={accuracy?.activeModel ? `${accuracy.activeModel.algorithm} ${accuracy.activeModel.version}` : "—"}
+            accent
+            sub={
+              accuracy?.activeModel?.valLogLoss != null
+                ? `log loss ${accuracy.activeModel.valLogLoss.toFixed(3)}${
+                    accuracy.activeModel.valBrier != null ? ` · brier ${accuracy.activeModel.valBrier.toFixed(3)}` : ""
+                  }`
+                : undefined
+            }
+            subColor="var(--muted)"
+          />
         </div>
 
         <CalendarStrip past={calendar?.past ?? []} future={calendar?.future ?? []} />
@@ -239,7 +290,19 @@ export default async function DashboardPage() {
   );
 }
 
-function Kpi({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+function Kpi({
+  label,
+  value,
+  accent,
+  sub,
+  subColor = "var(--good)",
+}: {
+  label: string;
+  value: string;
+  accent?: boolean;
+  sub?: string;
+  subColor?: string;
+}) {
   return (
     <div className="rounded-lg p-4 border" style={{ background: "var(--surface)", borderColor: "var(--line)" }}>
       <div className="font-mono text-[10.5px] uppercase tracking-wider" style={{ color: "var(--muted)" }}>
@@ -251,6 +314,11 @@ function Kpi({ label, value, accent }: { label: string; value: string; accent?: 
       >
         {value}
       </div>
+      {sub && (
+        <div className="font-mono text-[10px] mt-1" style={{ color: subColor }}>
+          {sub}
+        </div>
+      )}
     </div>
   );
 }

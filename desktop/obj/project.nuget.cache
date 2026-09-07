@@ -1,14 +1,10 @@
 {
   "version": 2,
-  "dgSpecHash": "0U/TNaI7T/k=",
+  "dgSpecHash": "1O9LXvwhXOM=",
   "success": true,
-  "projectFilePath": "C:\\jfrodriguezv\\SourceCodeAnthropic\\Hagamoslo\\desktop\\Madrid.Desktop.csproj",
+  "projectFilePath": "C:\\jfrodriguezv\\SourceCodeAnthropic\\Personal\\HastaFinal\\desktop\\Madrid.Desktop.csproj",
   "expectedPackageFiles": [
-    "C:\\Users\\jfrodriguezv\\.nuget\\packages\\microsoft.net.illink.tasks\\10.0.11\\microsoft.net.illink.tasks.10.0.11.nupkg.sha512",
-    "C:\\Users\\jfrodriguezv\\.nuget\\packages\\microsoft.web.webview2\\1.0.4129.50\\microsoft.web.webview2.1.0.4129.50.nupkg.sha512",
-    "C:\\Users\\jfrodriguezv\\.nuget\\packages\\microsoft.netcore.app.runtime.win-x64\\10.0.11\\microsoft.netcore.app.runtime.win-x64.10.0.11.nupkg.sha512",
-    "C:\\Users\\jfrodriguezv\\.nuget\\packages\\microsoft.windowsdesktop.app.runtime.win-x64\\10.0.11\\microsoft.windowsdesktop.app.runtime.win-x64.10.0.11.nupkg.sha512",
-    "C:\\Users\\jfrodriguezv\\.nuget\\packages\\microsoft.aspnetcore.app.runtime.win-x64\\10.0.11\\microsoft.aspnetcore.app.runtime.win-x64.10.0.11.nupkg.sha512"
+    "C:\\Users\\jfrodriguezv\\.nuget\\packages\\microsoft.web.webview2\\1.0.4129.50\\microsoft.web.webview2.1.0.4129.50.nupkg.sha512"
   ],
   "logs": []
 }

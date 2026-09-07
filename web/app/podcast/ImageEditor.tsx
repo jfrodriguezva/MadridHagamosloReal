@@ -37,6 +37,48 @@ const TOOL_HELP: Record<Tool, string> = {
 let idSeq = 1;
 const newId = () => `t${idSeq++}`;
 
+// Plantillas: posiciones/estilos de texto ya pensados para miniatura de episodio,
+// para no armar el layout de texto desde cero cada vez -- el usuario solo cambia
+// las palabras y, si quiere, arrastra/reescala como con cualquier capa de texto.
+type ImageTemplate = { id: string; label: string; layers: Omit<TextLayer, "id">[] };
+
+const TEMPLATES: ImageTemplate[] = [
+  {
+    id: "resultado",
+    label: "Resultado",
+    layers: [
+      {
+        x: CANVAS_W * 0.1, y: CANVAS_H * 0.06, w: CANVAS_W * 0.8, h: 56,
+        text: "PARTIDO ANALIZADO", color: "#ffffff", fontSize: 32, font: "mono", weight: 700, align: "center",
+      },
+      {
+        x: CANVAS_W * 0.08, y: CANVAS_H * 0.68, w: CANVAS_W * 0.84, h: 180,
+        text: "2 - 0", color: "#d9b95c", fontSize: 130, font: "display", weight: 900, align: "center",
+      },
+    ],
+  },
+  {
+    id: "titular",
+    label: "Titular",
+    layers: [
+      {
+        x: CANVAS_W * 0.08, y: CANVAS_H * 0.6, w: CANVAS_W * 0.84, h: 260,
+        text: "TU TITULAR AQUÍ", color: "#ffffff", fontSize: 76, font: "display", weight: 800, align: "left",
+      },
+    ],
+  },
+  {
+    id: "cita",
+    label: "Cita",
+    layers: [
+      {
+        x: CANVAS_W * 0.12, y: CANVAS_H * 0.4, w: CANVAS_W * 0.76, h: 220,
+        text: "Escribe aquí la frase destacada", color: "#ffffff", fontSize: 50, font: "body", weight: 600, align: "center",
+      },
+    ],
+  },
+];
+
 type Filters = { grayscale: number; sepia: number; brightness: number; contrast: number; saturate: number };
 const DEFAULT_FILTERS: Filters = { grayscale: 0, sepia: 0, brightness: 100, contrast: 100, saturate: 100 };
 function filtersToCss(f: Filters) {
@@ -94,6 +136,14 @@ export default function ImageEditor() {
     if (!selectedId) return;
     setTexts((ts) => ts.filter((t) => t.id !== selectedId));
     setSelectedId(null);
+  }
+
+  function applyTemplate(t: ImageTemplate) {
+    if (texts.length > 0 && !confirm("Esto reemplaza el texto actual por la plantilla. ¿Continuar?")) return;
+    const newTexts = t.layers.map((l) => ({ ...l, id: newId() }));
+    setTexts(newTexts);
+    setSelectedId(newTexts[0]?.id ?? null);
+    setTool("mover");
   }
 
   async function handlePickImage() {
@@ -364,7 +414,26 @@ export default function ImageEditor() {
         {hasImage && (
           <>
             <div>
-              <span className="font-mono text-[11px] uppercase tracking-wider" style={{ color: "var(--muted)" }}>2. Herramienta</span>
+              <span className="font-mono text-[11px] uppercase tracking-wider" style={{ color: "var(--muted)" }}>2. Plantilla</span>
+              <div className="flex gap-1.5 mt-2">
+                {TEMPLATES.map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => applyTemplate(t)}
+                    className="font-mono text-[10.5px] px-2 py-1.5 rounded-md flex-1"
+                    style={{ background: "var(--surface-2)", color: "var(--text)" }}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px] mt-1.5" style={{ color: "var(--muted)" }}>
+                Coloca el texto ya ubicado — solo cambia las palabras o arrástralo.
+              </p>
+            </div>
+
+            <div>
+              <span className="font-mono text-[11px] uppercase tracking-wider" style={{ color: "var(--muted)" }}>3. Herramienta</span>
               <div className="flex flex-col gap-1 mt-2">
                 {(["mover", "brillo", "ocultar", "sello"] as Tool[]).map((t) => (
                   <button key={t} onClick={() => setTool(t)}
@@ -402,14 +471,14 @@ export default function ImageEditor() {
             </div>
 
             <div>
-              <span className="font-mono text-[11px] uppercase tracking-wider" style={{ color: "var(--muted)" }}>3. Texto</span>
+              <span className="font-mono text-[11px] uppercase tracking-wider" style={{ color: "var(--muted)" }}>4. Texto</span>
               <button onClick={addText} className="font-mono text-[11px] px-2.5 py-1.5 rounded-md mt-2 w-full" style={{ background: "var(--surface-2)" }}>
                 + Agregar texto
               </button>
             </div>
 
             <div>
-              <span className="font-mono text-[11px] uppercase tracking-wider" style={{ color: "var(--muted)" }}>4. Ajustes de imagen</span>
+              <span className="font-mono text-[11px] uppercase tracking-wider" style={{ color: "var(--muted)" }}>5. Ajustes de imagen</span>
               <div className="flex flex-col gap-1.5 mt-2">
                 {([
                   ["Brillo", "brightness", 50, 150],

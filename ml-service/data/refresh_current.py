@@ -95,7 +95,7 @@ def upsert_fixture(cur, f, competition_type=None):
 
 
 def step_fixtures(cur):
-    log("1/6 · Fixtures de la temporada actual (LaLiga)...")
+    log("1/7 · Fixtures de la temporada actual (LaLiga)...")
     season = current_season()
     data = api_get("fixtures", {"league": LALIGA_LEAGUE_ID, "season": season})
     if not data:
@@ -110,7 +110,7 @@ def step_fixtures(cur):
         n += 1
     log(f"   {n} partidos de LaLiga {season}-{season+1} actualizados")
 
-    log("2/6 · Fixtures de la temporada actual (Champions)...")
+    log("2/7 · Fixtures de la temporada actual (Champions)...")
     data = api_get("fixtures", {"team": REAL_MADRID_ID, "league": UCL_LEAGUE_ID, "season": season})
     if data:
         upsert_league(cur, UCL_LEAGUE_ID, "UEFA Champions League", "Europe")
@@ -124,7 +124,7 @@ def step_fixtures(cur):
 
 
 def step_lineups_events(cur):
-    log("3/6 · Alineaciones y eventos de partidos recién jugados...")
+    log("3/7 · Alineaciones y eventos de partidos recién jugados...")
     # Solo la temporada en curso -- el histórico ya se cargó una vez durante el
     # desarrollo; este botón es para lo nuevo, no para rehacer un backfill completo.
     cur.execute(
@@ -196,7 +196,7 @@ def step_lineups_events(cur):
 
 
 def step_ratings(cur):
-    log("4/6 · Calificaciones de rendimiento (IA)...")
+    log("4/7 · Calificaciones de rendimiento (IA)...")
     # Igual que arriba: solo temporada en curso -- los ~200 partidos viejos sin
     # calificación (API-Football no las tiene para temporadas muy antiguas) no
     # se vuelven a intentar en cada clic del botón.
@@ -237,7 +237,7 @@ def step_ratings(cur):
 
 
 def step_squad(cur):
-    log("5/6 · Plantilla vigente...")
+    log("5/7 · Plantilla vigente...")
     r = requests.get(f"{BASE}/players/squads", headers=HEADERS, params={"team": REAL_MADRID_ID}, timeout=20)
     r.raise_for_status()
     squad = r.json()["response"][0]["players"]
@@ -257,7 +257,7 @@ def step_squad(cur):
 
 
 def step_odds(cur):
-    log("6/6 · Momios de los próximos partidos...")
+    log("6/7 · Momios de los próximos partidos...")
     cur.execute(
         """
         SELECT FixtureId FROM Fixtures
@@ -299,6 +299,45 @@ def step_odds(cur):
     log(f"   {saved} momios guardados")
 
 
+def step_availability(cur):
+    log("7/7 · Bajas y dudas (lesión/sanción)...")
+    # Se crea sola la primera vez que corre este paso -- así una app ya instalada
+    # (madrid.db viejo, sin esta tabla) no necesita reinstalarse para tener esto.
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS PlayerAvailability (
+            PlayerId INTEGER NOT NULL,
+            FixtureId INTEGER NOT NULL,
+            Type TEXT,
+            Reason TEXT,
+            IngestedAtUtc TEXT,
+            PRIMARY KEY (PlayerId, FixtureId)
+        )
+        """
+    )
+    data = api_get("injuries", {"team": REAL_MADRID_ID, "season": current_season()})
+    if not data:
+        log("   sin datos (cuota agotada o temporada sin bajas registradas)")
+        return
+    n = 0
+    for row in data.get("response", []):
+        player = row.get("player") or {}
+        fixture = row.get("fixture") or {}
+        if player.get("id") is None or fixture.get("id") is None:
+            continue
+        cur.execute(
+            """
+            INSERT INTO PlayerAvailability (PlayerId, FixtureId, Type, Reason, IngestedAtUtc)
+            VALUES (?, ?, ?, ?, datetime('now'))
+            ON CONFLICT(PlayerId, FixtureId) DO UPDATE SET
+                Type=excluded.Type, Reason=excluded.Reason, IngestedAtUtc=excluded.IngestedAtUtc
+            """,
+            player["id"], fixture["id"], player.get("type"), player.get("reason"),
+        )
+        n += 1
+    log(f"   {n} registro(s) de bajas/dudas actualizados")
+
+
 def run():
     if not os.environ.get("SQLITE_PATH"):
         log("Falta SQLITE_PATH en el entorno.")
@@ -311,6 +350,7 @@ def run():
         step_ratings(cur); conn.commit()
         step_squad(cur); conn.commit()
         step_odds(cur); conn.commit()
+        step_availability(cur); conn.commit()
         log("Listo.")
     finally:
         cur.close()

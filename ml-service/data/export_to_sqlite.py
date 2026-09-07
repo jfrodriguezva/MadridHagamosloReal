@@ -29,6 +29,7 @@ TABLES = [
     "FixtureStatistics", "Coaches", "CoachCareer", "MatchLineups", "MatchLineupPlayers",
     "MatchEvents2", "MatchPlayerRatings", "UserLineups", "UserLineupPlayers",
     "UserPlayerRatings", "OddsSnapshots", "PodcastHistory", "GeneratedMedia",
+    "PlayerAvailability",
 ]
 
 # Columnas IDENTITY en SQL Server -- en SQLite, "INTEGER PRIMARY KEY" de una

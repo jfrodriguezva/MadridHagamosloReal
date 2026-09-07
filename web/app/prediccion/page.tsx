@@ -23,6 +23,18 @@ type FullPrediction = {
   } | null;
   btts: { probYes: number } | null;
   over25: { probYes: number } | null;
+  recentForm?: ("W" | "D" | "L")[];
+  h2h?: {
+    summary: { total: number; wins: number; draws: number; losses: number };
+    recent: {
+      kickoffUtc: string;
+      competitionType: string | null;
+      homeTeamId: number;
+      awayTeamId: number;
+      homeGoals: number;
+      awayGoals: number;
+    }[];
+  };
 };
 
 type OddsResponse = {
@@ -30,6 +42,18 @@ type OddsResponse = {
   model: { probHome: number; probDraw: number; probAway: number } | null;
   bookmakers: { bookmaker: string; impliedHome: number; impliedDraw: number; impliedAway: number }[];
 };
+
+type AvailabilityEntry = { playerId: number; name: string; type: string | null; reason: string | null };
+
+async function getAvailability(): Promise<AvailabilityEntry[]> {
+  try {
+    const res = await fetch(`${API}/api/players/availability`, { cache: "no-store" });
+    if (!res.ok) return [];
+    return (await res.json()) as AvailabilityEntry[];
+  } catch {
+    return [];
+  }
+}
 
 async function getPrediction(): Promise<FullPrediction | null> {
   try {
@@ -120,7 +144,13 @@ function confidenceAdvice(prob: number | undefined): { label: string; text: stri
 }
 
 export default async function PrediccionPage() {
-  const [data, odds, scorers, value] = await Promise.all([getPrediction(), getOdds(), getScorers(), getValue()]);
+  const [data, odds, scorers, value, availability] = await Promise.all([
+    getPrediction(),
+    getOdds(),
+    getScorers(),
+    getValue(),
+    getAvailability(),
+  ]);
   const avgBookImpliedAway = odds?.bookmakers?.length
     ? odds.bookmakers.reduce((s, b) => s + b.impliedAway, 0) / odds.bookmakers.length
     : null;
@@ -147,6 +177,86 @@ export default async function PrediccionPage() {
                 })}
               </div>
             </div>
+
+            {((data.recentForm && data.recentForm.length > 0) || data.h2h) && (
+              <div className="rounded-xl p-5 border grid grid-cols-2 gap-5" style={{ background: "var(--surface)", borderColor: "var(--line)" }}>
+                {data.recentForm && data.recentForm.length > 0 && (
+                  <div>
+                    <span className="font-mono text-[11px] uppercase tracking-wider" style={{ color: "var(--muted)" }}>
+                      Racha reciente
+                    </span>
+                    <div className="flex gap-1.5 mt-2">
+                      {data.recentForm.map((r, i) => (
+                        <span
+                          key={i}
+                          className="w-7 h-7 rounded-full flex items-center justify-center font-mono text-xs font-bold text-white"
+                          style={{ background: r === "W" ? "var(--good)" : r === "L" ? "var(--bad)" : "var(--muted)" }}
+                          title={r === "W" ? "Ganó" : r === "L" ? "Perdió" : "Empató"}
+                        >
+                          {r}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {data.h2h && (
+                  <div>
+                    <span className="font-mono text-[11px] uppercase tracking-wider" style={{ color: "var(--muted)" }}>
+                      Historial vs. {data.match.homeTeamId === REAL_MADRID_ID ? data.match.awayTeam : data.match.homeTeam}
+                    </span>
+                    <div className="text-sm mt-2">
+                      {data.h2h.summary.total > 0 ? (
+                        <>
+                          <span style={{ color: "var(--good)" }}>{data.h2h.summary.wins}V</span>{" "}
+                          <span style={{ color: "var(--muted)" }}>{data.h2h.summary.draws}E</span>{" "}
+                          <span style={{ color: "var(--bad)" }}>{data.h2h.summary.losses}D</span>{" "}
+                          <span style={{ color: "var(--muted)" }}>en {data.h2h.summary.total} enfrentamientos</span>
+                        </>
+                      ) : (
+                        <span style={{ color: "var(--muted)" }}>Sin enfrentamientos previos en la base.</span>
+                      )}
+                    </div>
+                    {data.h2h.recent.length > 0 && (
+                      <div className="flex flex-col gap-1 mt-2">
+                        {data.h2h.recent.slice(0, 3).map((m, i) => (
+                          <div key={i} className="font-mono text-[11px]" style={{ color: "var(--muted)" }}>
+                            {new Date(m.kickoffUtc).getFullYear()} · {m.homeTeamId === REAL_MADRID_ID ? "RM" : "V"} {m.homeGoals}-{m.awayGoals}{" "}
+                            {m.awayTeamId === REAL_MADRID_ID ? "RM" : "V"}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {availability.length > 0 && (
+              <div className="rounded-xl p-5 border" style={{ background: "var(--surface)", borderColor: "var(--line)" }}>
+                <span className="font-mono text-[11px] uppercase tracking-wider" style={{ color: "var(--muted)" }}>
+                  Bajas y dudas
+                </span>
+                <div className="flex flex-col gap-2 mt-3">
+                  {availability.map((a) => (
+                    <div key={a.playerId} className="flex items-center justify-between text-sm">
+                      <span>{a.name}</span>
+                      <span
+                        className="font-mono text-[10px] px-2 py-1 rounded-full"
+                        style={{
+                          background: a.type === "Missing Fixture" ? "#f6e4e5" : "var(--gold-soft)",
+                          color: a.type === "Missing Fixture" ? "var(--bad)" : "var(--gold)",
+                        }}
+                      >
+                        {a.reason ?? a.type ?? "Duda"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-[11px] mt-2" style={{ color: "var(--muted)" }}>
+                  Según el último reporte de API-Football — puede no reflejar cambios de último momento.
+                </p>
+              </div>
+            )}
 
             {data.x12 && (
               <div className="rounded-xl p-5 border" style={{ background: "var(--surface)", borderColor: "var(--line)" }}>

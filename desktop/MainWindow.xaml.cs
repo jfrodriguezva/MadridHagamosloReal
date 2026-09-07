@@ -61,6 +61,41 @@ public partial class MainWindow : Window
         }
     }
 
+    // Respaldo automático de madrid.db en cada arranque de la app instalada -- es la
+    // única fuente de verdad del histórico ahí (no hay SQL Server de por medio). Sin
+    // esto, un archivo corrupto o borrado por accidente se lleva todo el proyecto.
+    // Se copia ANTES de arrancar la API para minimizar la chance de copiar el archivo
+    // a mitad de una escritura; nunca debe tumbar el arranque de la app si falla.
+    private const int MaxBackups = 14;
+
+    private void BackupDatabase()
+    {
+        if (!IsInstalled || !File.Exists(InstalledDb)) return;
+        try
+        {
+            var backupDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "MadridHagamosloReal", "Backups");
+            Directory.CreateDirectory(backupDir);
+
+            var dest = Path.Combine(backupDir, $"madrid-{DateTime.Now:yyyyMMdd-HHmmss}.db");
+            File.Copy(InstalledDb, dest, overwrite: true);
+
+            var old = new DirectoryInfo(backupDir).GetFiles("madrid-*.db")
+                .OrderByDescending(f => f.CreationTimeUtc)
+                .Skip(MaxBackups);
+            foreach (var f in old)
+            {
+                try { f.Delete(); } catch { /* no bloquear por un archivo que no se pudo borrar */ }
+            }
+        }
+        catch
+        {
+            // El backup nunca debe impedir que la app abra -- si falla (disco lleno,
+            // DB bloqueada de forma exclusiva, etc.) simplemente se reintenta la próxima vez.
+        }
+    }
+
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
         // WebView2 intenta por defecto crear su carpeta de datos junto al .exe
@@ -74,6 +109,8 @@ public partial class MainWindow : Window
         var environment = await CoreWebView2Environment.CreateAsync(userDataFolder: userDataFolder);
         await Browser.EnsureCoreWebView2Async(environment);
         Browser.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
+
+        BackupDatabase();
 
         await EnsureApiRunning();
         await EnsureWebRunning();

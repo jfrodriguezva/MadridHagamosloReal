@@ -10,10 +10,11 @@
 using System;
 using System.Reflection;
 
+[assembly: Microsoft.Extensions.Configuration.UserSecrets.UserSecretsIdAttribute("madrid-hagamoslo-real-api-6f2a9e1c")]
 [assembly: System.Reflection.AssemblyCompanyAttribute("Madrid.Api")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+88c529b4cd01f43e494d9c364a37ddff76cb74e2")]
 [assembly: System.Reflection.AssemblyProductAttribute("Madrid.Api")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Madrid.Api")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

@@ -17,3 +17,10 @@ Thumbs.db
 # se crea sola al correr la app en dev, no es parte del proyecto.
 *.WebView2/
 .claude/
+
+# Logs de Serilog (api/Program.cs) -- runtime, no build artifact, y crecen sin
+# límite día a día. A diferencia de node_modules/bin/obj, no aportan nada a un
+# clon nuevo -- ver "Robustez (backups, logs, tests)" en RECOVERY.md.
+api/**/logs/
+ml-service/.pytest_cache/
+ml-service/tests/__pycache__/

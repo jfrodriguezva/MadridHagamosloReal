@@ -10,7 +10,15 @@ import AutoVideoGenerator from "./AutoVideoGenerator";
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5080";
 
 type HistoryItem = { podcastId: number; fixtureId: number; title: string; episodeLabel: string; youtubeLink: string; generatedAtUtc: string };
-type Suggestions = { titles: string[]; hashtags: string[]; talkingPoints: string[] };
+type OutlineBlock = { block: string; minutes: number; note: string };
+type ClipSuggestion = { label: string; fromMinute: number; toMinute: number };
+type Suggestions = {
+  titles: string[];
+  hashtags: string[];
+  talkingPoints: string[];
+  outline?: OutlineBlock[];
+  clipSuggestions?: ClipSuggestion[];
+};
 
 export default function PodcastPage() {
   const [analysis, setAnalysis] = useState<string | null>(null);
@@ -192,9 +200,30 @@ export default function PodcastPage() {
 
         {suggestions && (
           <div className="rounded-xl p-5 border" style={{ background: "var(--surface)", borderColor: "var(--line)" }}>
-            <span className="font-mono text-[11px] uppercase tracking-wider" style={{ color: "var(--muted)" }}>
-              Qué hablar en el episodio
-            </span>
+            <div className="flex items-baseline justify-between">
+              <span className="font-mono text-[11px] uppercase tracking-wider" style={{ color: "var(--muted)" }}>
+                Qué hablar en el episodio
+              </span>
+              {suggestions.outline && suggestions.outline.length > 0 && (
+                <span className="font-mono text-[10px]" style={{ color: "var(--muted)" }}>
+                  ~{suggestions.outline.reduce((s, b) => s + b.minutes, 0)} min sugeridos
+                </span>
+              )}
+            </div>
+            {suggestions.outline && suggestions.outline.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {suggestions.outline.map((b) => (
+                  <span
+                    key={b.block}
+                    className="font-mono text-[10px] px-2 py-1 rounded-full"
+                    style={{ background: "var(--surface-2)", color: "var(--muted)" }}
+                    title={b.note}
+                  >
+                    {b.block} · {b.minutes} min
+                  </span>
+                ))}
+              </div>
+            )}
             <div className="flex flex-col gap-2 mt-3">
               {suggestions.talkingPoints.map((t, i) => (
                 <div key={i} className="flex gap-2 text-sm">
@@ -203,6 +232,24 @@ export default function PodcastPage() {
                 </div>
               ))}
             </div>
+
+            {suggestions.clipSuggestions && suggestions.clipSuggestions.length > 0 && (
+              <div className="mt-5 pt-4" style={{ borderTop: "1px solid var(--line)" }}>
+                <span className="font-mono text-[11px] uppercase tracking-wider" style={{ color: "var(--muted)" }}>
+                  Clips cortos sugeridos (Reels / Shorts / TikTok)
+                </span>
+                <div className="flex flex-col gap-1.5 mt-2">
+                  {suggestions.clipSuggestions.map((c, i) => (
+                    <div key={i} className="flex justify-between text-sm">
+                      <span>{c.label}</span>
+                      <span className="font-mono text-[11px]" style={{ color: "var(--muted)" }}>
+                        min. {c.fromMinute}–{c.toMinute}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="mt-5 pt-4" style={{ borderTop: "1px solid var(--line)" }}>
               <span className="font-mono text-[11px] uppercase tracking-wider" style={{ color: "var(--muted)" }}>
