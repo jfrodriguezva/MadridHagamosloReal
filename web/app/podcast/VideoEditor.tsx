@@ -45,6 +45,11 @@ export default function VideoEditor() {
   const [exportProgress, setExportProgress] = useState(0);
   const [exportLog, setExportLog] = useState<string | null>(null);
 
+  const [transcribing, setTranscribing] = useState(false);
+  const [transcribeLog, setTranscribeLog] = useState<string | null>(null);
+  const [transcript, setTranscript] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
   const videoRef = useRef<HTMLVideoElement>(null);
 
   const activeMediaOverlays = mediaOverlays.filter((o) => current >= o.startSec && current < o.endSec);
@@ -253,6 +258,64 @@ export default function VideoEditor() {
     }
   }
 
+  // Extrae solo el audio (comprimido, no el video completo) con ffmpeg.wasm y lo sube
+  // a /api/media/transcribe -- ahí un script Python local (faster-whisper) lo convierte
+  // a texto, sin ningún servicio externo de pago. Solo funciona en desarrollo por ahora
+  // (ver comentario en Program.cs); si no está disponible, el error lo explica.
+  async function handleTranscribe() {
+    if (!baseVideo) return;
+    setTranscribing(true);
+    setTranscript(null);
+    setCopied(false);
+    setTranscribeLog("Cargando el motor de audio…");
+    try {
+      const { FFmpeg } = await import("@ffmpeg/ffmpeg");
+      const { toBlobURL, fetchFile } = await import("@ffmpeg/util");
+      const ffmpeg = new FFmpeg();
+      await ffmpeg.load({
+        coreURL: await toBlobURL("/ffmpeg/ffmpeg-core.js", "text/javascript"),
+        wasmURL: await toBlobURL("/ffmpeg/ffmpeg-core.wasm", "application/wasm"),
+      });
+
+      setTranscribeLog("Extrayendo el audio de tu grabación…");
+      await ffmpeg.writeFile("base.mp4", await fetchFile(baseVideo.url));
+      const code = await ffmpeg.exec(["-i", "base.mp4", "-vn", "-acodec", "libmp3lame", "-b:a", "96k", "audio.mp3"]);
+      if (code !== 0) throw new Error("No se pudo extraer el audio del video.");
+
+      const audioData = await ffmpeg.readFile("audio.mp3");
+      const audioBytes = audioData instanceof Uint8Array ? new Uint8Array(audioData) : audioData;
+      const audioBlob = new Blob([audioBytes], { type: "audio/mpeg" });
+
+      setTranscribeLog("Transcribiendo — puede tardar varios minutos según la duración…");
+      const form = new FormData();
+      form.append("audio", audioBlob, "audio.mp3");
+      const res = await fetch(`${API}/api/media/transcribe`, { method: "POST", body: form });
+      const body = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        throw new Error(body?.detail ?? body?.title ?? "La transcripción falló.");
+      }
+      setTranscript(body.transcript || "(sin texto detectado)");
+      setTranscribeLog(null);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Error desconocido";
+      setTranscribeLog(`No se pudo transcribir: ${msg}`);
+    } finally {
+      setTranscribing(false);
+    }
+  }
+
+  async function copyTranscript() {
+    if (!transcript) return;
+    try {
+      await navigator.clipboard.writeText(transcript);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      /* clipboard no disponible -- el usuario puede seleccionar el texto a mano */
+    }
+  }
+
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
@@ -350,17 +413,53 @@ export default function VideoEditor() {
                 </p>
               </div>
 
-              <button
-                onClick={handleExportVideo}
-                disabled={exporting}
-                className="self-start font-mono text-xs px-4 py-2.5 rounded-md font-bold mt-1"
-                style={{ background: "var(--purple)", color: "#fff" }}
-              >
-                {exporting ? `RENDERIZANDO… ${exportProgress}%` : "GENERAR VIDEO FINAL"}
-              </button>
+              <div className="flex gap-2 mt-1">
+                <button
+                  onClick={handleExportVideo}
+                  disabled={exporting}
+                  className="self-start font-mono text-xs px-4 py-2.5 rounded-md font-bold"
+                  style={{ background: "var(--purple)", color: "#fff" }}
+                >
+                  {exporting ? `RENDERIZANDO… ${exportProgress}%` : "GENERAR VIDEO FINAL"}
+                </button>
+                <button
+                  onClick={handleTranscribe}
+                  disabled={transcribing}
+                  className="self-start font-mono text-xs px-4 py-2.5 rounded-md font-bold"
+                  style={{ background: "var(--surface-2)", color: "var(--text)" }}
+                  title="Transcribe el audio a texto de forma local (faster-whisper) para armar tus shownotes"
+                >
+                  {transcribing ? "TRANSCRIBIENDO…" : "📝 TRANSCRIBIR AUDIO"}
+                </button>
+              </div>
               {exportLog && <p className="text-[11px] font-mono" style={{ color: "var(--muted)" }}>{exportLog}</p>}
+              {transcribeLog && <p className="text-[11px] font-mono" style={{ color: "var(--muted)" }}>{transcribeLog}</p>}
             </div>
           </div>
+
+          {transcript && (
+            <div className="rounded-lg border p-4" style={{ background: "var(--surface)", borderColor: "var(--line)" }}>
+              <div className="flex items-center justify-between mb-2">
+                <span className="font-mono text-[11px] uppercase tracking-wider" style={{ color: "var(--muted)" }}>
+                  Transcripción — para tu descripción de YouTube o shownotes
+                </span>
+                <button
+                  onClick={copyTranscript}
+                  className="font-mono text-[10px] px-2.5 py-1 rounded-full"
+                  style={{ border: "1px solid var(--line)", color: copied ? "var(--good)" : "var(--muted)" }}
+                >
+                  {copied ? "COPIADO ✓" : "COPIAR"}
+                </button>
+              </div>
+              <textarea
+                readOnly
+                value={transcript}
+                rows={6}
+                className="w-full rounded-md border p-2.5 text-sm resize-y"
+                style={{ borderColor: "var(--line)", background: "var(--bg)", color: "var(--text)" }}
+              />
+            </div>
+          )}
 
           {/* Línea de tiempo */}
           <div>

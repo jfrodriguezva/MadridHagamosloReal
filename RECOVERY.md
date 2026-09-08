@@ -221,17 +221,53 @@ documentan los "Gotchas" de abajo).
 **Tests.**
 - `api.Tests/` — xUnit + `WebApplicationFactory<Program>` contra un SQLite
   temporal con datos sembrados a mano (no necesita SQL Server). Corre con
-  `cd api.Tests && dotnet test`. Cubre el cálculo de accuracy/baseline de
-  `/api/dashboard/model-accuracy` y el health check.
+  `cd api.Tests && dotnet test`. Cubre accuracy/baseline, health check,
+  disponibilidad de jugadores y el endpoint de transcripción (el `/api/media/
+  transcribe` corre un proceso Python real, sin mocks, y fija el
+  comportamiento honesto de hoy: falla claro si falta `faster-whisper`).
 - `ml-service/tests/` — pytest sobre la matemática pura (el predictor Poisson
   de `compare_baseline_predictor.py` y `rps_3class`/`RESULT_TO_IDX` de
   `train_model.py`, incluyendo un test que protege contra el bug real ya
-  resuelto de orden de clases alfabético). Corre con:
+  resuelto de orden de clases alfabético) y el SQL de `PlayerAvailability`.
+  Corre con:
   ```bash
   cd ml-service
   .venv/Scripts/python.exe -m pip install -r requirements-dev.txt
   .venv/Scripts/python.exe -m pytest tests/ -v
   ```
+
+---
+
+## Generación automática de contenido y transcripción
+
+**Videos/imágenes desde datos reales (sin edición manual).** En la pestaña
+Podcast → Contenido, tres botones generan piezas listas para publicar, cada
+uno consultando `/api/matches/{id}/detail` y `/api/matches/{id}/mvp`:
+- **Generar video automático** (`AutoVideoGenerator.tsx`) — video vertical
+  con varias escenas (resultado, goleadores, MVP, talking points) y
+  transición `xfade`.
+- **Generar clips por gol** (`GoalClips.tsx`) — un video corto (~3.5s) por
+  cada gol del Real Madrid, listo para Reels/Shorts/TikTok.
+- **Generar infografía automática** (`AutoInfographic.tsx`) — una sola
+  imagen cuadrada (1080×1080) con marcador, goleadores y figura del partido.
+
+Los tres dibujan en `<canvas>` y, para video, codifican con `ffmpeg.wasm` —
+mismo patrón, 100% local, sin llamar a ningún servicio externo.
+
+**Transcripción local (voz-a-texto).** En el editor de video, el botón
+"Transcribir audio" extrae el audio de tu grabación con `ffmpeg.wasm`
+(comprimido, no sube el video completo) y lo manda a `POST
+/api/media/transcribe`, que corre `ml-service/data/transcribe.py`
+(`faster-whisper`, 100% local, sin API key) y devuelve el texto para pegar
+en la descripción de YouTube. **Solo funciona en desarrollo por ahora** — la
+API busca el script contra `ml-service/.venv`, no contra el Python portátil
+del instalador. Para activarlo:
+```bash
+cd ml-service
+.venv/Scripts/python.exe -m pip install -r requirements-transcribe.txt
+```
+La primera transcripción descarga el modelo (~150MB, modelo "small") desde
+Hugging Face una sola vez; de ahí en adelante funciona sin internet.
 
 ---
 

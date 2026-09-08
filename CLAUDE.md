@@ -50,6 +50,32 @@ no hay que redescubrir:
   falla — usar `-map 0:a?` (opcional) o el patrón try/catch-reintentar-sin-audio
   cuando sí se mezclan pistas nuevas con `amix`.
 
+**Generación automática de contenido desde datos reales**: `AutoVideoGenerator.tsx`
+(video vertical con escenas tipo historia), `GoalClips.tsx` (un clip corto por
+gol, para Reels/Shorts/TikTok) y `AutoInfographic.tsx` (imagen cuadrada única)
+comparten el mismo patrón: dibujan tarjetas en `<canvas>` con datos reales de
+`/api/matches/{id}/detail` y `/api/matches/{id}/mvp`, y para video las
+codifican con `ffmpeg.wasm` (secuencia de imágenes → mp4, con `xfade` para
+transiciones cuando hay varias escenas). Nunca usan una plantilla con datos
+inventados — si un dato no está (ej. sin MVP calificado todavía), la tarjeta
+lo dice explícitamente en vez de omitirlo en silencio.
+
+**Transcripción de voz-a-texto**: igual que el editor de imagen, **sin IA
+externa de pago** — usa `faster-whisper` corriendo 100% local
+(`ml-service/data/transcribe.py`), no la API de OpenAI. Hoy es **solo para
+desarrollo** (usa `ml-service/.venv`, el usuario instala `faster-whisper` a
+mano con `requirements-transcribe.txt` porque es una dependencia pesada) —
+todavía no está en el Python portátil del instalador. Si se pide llevarlo a
+la app instalada, hay que evaluar el tamaño que le suma al instalador antes
+de hacerlo, no asumir que es gratis en espacio.
+
+**Gotcha de .NET 10**: cualquier endpoint Minimal API que reciba `IFormFile`
+exige metadata de antiforgery aunque nunca se llame a `AddAntiforgery()` —
+sin `.DisableAntiforgery()` en el endpoint, truena con
+`InvalidOperationException` en la primera request real (ver
+`/api/media/transcribe` en `api/Program.cs`). Ya se resolvió una vez, no
+hay que redescubrirlo si se agrega otro endpoint de subida de archivos.
+
 **Selección de archivos en la app WPF**: WebView2 es Chromium — un
 `<input type="file">` normal ya abre el picker nativo de Windows sin código
 extra. No construyas un puente nativo custom (`window.chrome.webview.postMessage`)

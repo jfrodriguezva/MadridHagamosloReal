@@ -6,6 +6,8 @@ import ImageEditor from "./ImageEditor";
 import VideoEditor from "./VideoEditor";
 import MediaHistory from "./MediaHistory";
 import AutoVideoGenerator from "./AutoVideoGenerator";
+import GoalClips from "./GoalClips";
+import AutoInfographic from "./AutoInfographic";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5080";
 
@@ -279,6 +281,8 @@ export default function PodcastPage() {
                 talkingPoints={suggestions?.talkingPoints ?? []}
                 hashtags={suggestions?.hashtags ?? []}
               />
+              <GoalClips fixtureId={fixtureId} />
+              <AutoInfographic fixtureId={fixtureId} />
 
               {!showPublishForm ? (
                 <button

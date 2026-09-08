@@ -28,6 +28,12 @@ Log.Logger = new LoggerConfiguration()
 var builder = WebApplication.CreateBuilder(args);
 builder.Host.UseSerilog();
 
+// El default de Kestrel (~28MB) alcanza para las cargas normales de la app, pero se queda
+// corto para el audio que sube /api/media/transcribe -- el frontend ya lo extrae/comprime
+// con ffmpeg.wasm antes de subirlo, pero un episodio largo aun así puede pasar de eso.
+// App local de un solo usuario -- un límite generoso no es un riesgo real.
+builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = 500L * 1024 * 1024);
+
 // Permite que este mismo .exe corra como Servicio de Windows real (instalado
 // vía install-service.ps1) además de como consola normal en desarrollo --
 // sin esto, el Administrador de Servicios no puede iniciarlo (nunca hace el
@@ -1177,6 +1183,78 @@ app.MapGet("/api/lineups/last-played", async (Func<IDbConnection> factory) =>
 
     return Results.Ok(new { fixtureId = lastFixture, slots = starters });
 });
+
+// Transcripción local (voz-a-texto) de la grabación del podcast, para armar shownotes/
+// descripción de YouTube sin escuchar todo de nuevo. Sube el AUDIO ya extraído (el
+// frontend lo recorta del video con ffmpeg.wasm antes de mandarlo, para no subir el video
+// completo) y corre faster-whisper contra el venv de ml-service -- por ahora solo funciona
+// en el entorno de desarrollo (dotnet run), no en la app instalada: faster-whisper es una
+// dependencia pesada que todavía no se agregó al Python portátil del instalador.
+app.MapPost("/api/media/transcribe", async (IFormFile audio) =>
+{
+    var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+    var venvPython = Path.Combine(repoRoot, "ml-service", ".venv", "Scripts", "python.exe");
+    var scriptPath = Path.Combine(repoRoot, "ml-service", "data", "transcribe.py");
+
+    if (!File.Exists(venvPython) || !File.Exists(scriptPath))
+    {
+        return Results.Problem(
+            "Transcripción no disponible en este entorno -- falta ml-service/.venv o transcribe.py. " +
+            "Solo funciona corriendo la API en modo desarrollo por ahora.",
+            statusCode: 501);
+    }
+
+    var tempPath = Path.Combine(Path.GetTempPath(), $"madrid-transcribe-{Guid.NewGuid():N}{Path.GetExtension(audio.FileName)}");
+    await using (var stream = File.Create(tempPath))
+    {
+        await audio.CopyToAsync(stream);
+    }
+
+    try
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = venvPython,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            StandardOutputEncoding = System.Text.Encoding.UTF8,
+            StandardErrorEncoding = System.Text.Encoding.UTF8,
+            CreateNoWindow = true,
+        };
+        psi.ArgumentList.Add(scriptPath);
+        psi.ArgumentList.Add(tempPath);
+        psi.EnvironmentVariables["PYTHONIOENCODING"] = "utf-8";
+        psi.EnvironmentVariables["PYTHONUTF8"] = "1";
+
+        using var proc = new System.Diagnostics.Process { StartInfo = psi };
+        var stdout = new System.Text.StringBuilder();
+        var stderr = new System.Text.StringBuilder();
+        proc.OutputDataReceived += (_, e) => { if (e.Data != null) stdout.AppendLine(e.Data); };
+        proc.ErrorDataReceived += (_, e) => { if (e.Data != null) stderr.AppendLine(e.Data); };
+        proc.Start();
+        proc.BeginOutputReadLine();
+        proc.BeginErrorReadLine();
+        // Sin timeout explícito -- transcribir varios minutos de audio en CPU puede tardar
+        // varios minutos; es un flujo manual de un solo usuario, no un endpoint de alto tráfico.
+        await proc.WaitForExitAsync();
+
+        if (proc.ExitCode != 0)
+        {
+            return Results.Problem($"La transcripción falló: {stderr}", statusCode: 500);
+        }
+        return Results.Ok(new { transcript = stdout.ToString().Trim() });
+    }
+    finally
+    {
+        try { File.Delete(tempPath); } catch { /* archivo temporal, no crítico */ }
+    }
+})
+// ASP.NET Core exige antiforgery por defecto en cualquier endpoint que reciba IFormFile,
+// incluso sin AddAntiforgery() registrado -- sin esto, la request truena con
+// InvalidOperationException antes de llegar al handler. No hace falta protección CSRF
+// real aquí: es un endpoint local de un solo usuario, sin sesión ni cookies de por medio.
+.DisableAntiforgery();
 
 app.MapPost("/api/media/log", async (Func<IDbConnection> factory, MediaLogRequest req) =>
 {

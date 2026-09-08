@@ -1,0 +1,8 @@
+# Solo para transcripción local (voz-a-texto) -- pesado (descarga el modelo la
+# primera vez, cientos de MB) y no lo necesita el resto de ml-service, por eso
+# va aparte de requirements.txt y requirements-dev.txt.
+#
+# faster-whisper corre 100% local una vez descargado el modelo -- sin API key,
+# sin billing, sin conexión a internet después de la primera vez. Mismo
+# principio que ya aplica el editor de imagen (nunca IA externa de pago).
+faster-whisper==1.0.3
