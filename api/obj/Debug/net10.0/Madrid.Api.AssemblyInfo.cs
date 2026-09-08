@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Madrid.Api")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+e1db03f589ecf74dfaf609849d7ace800537d0e7")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+a5f6513169f5295bc8626cebaa05536df2437055")]
 [assembly: System.Reflection.AssemblyProductAttribute("Madrid.Api")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Madrid.Api")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
