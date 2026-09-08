@@ -301,7 +301,43 @@ app.MapGet("/api/predictions/next/full", async (Func<IDbConnection> factory) =>
         """, new { rm = RealMadridId, opp = opponentId });
     var recentForm = await RecentForm(conn);
 
-    return Results.Ok(new { match, x12, btts, over25, recentForm, h2h = new { summary = h2hSummary, recent = h2hRecent } });
+    // Tendencia de disparos (a favor/en contra) de los últimos 5 partidos con datos --
+    // no es xG real (API-Football no lo trae en el plan usado, y no está en el esquema),
+    // así que se etiqueta honestamente como "disparos", no "expected goals". Sirve para
+    // ver si el equipo genera/concede más peligro del que el resultado esconde.
+    var shotsRows = (await conn.QueryAsync<dynamic>(
+        $"""
+        SELECT {Top(5)} f.KickoffUtc AS kickoffUtc,
+               rm.ShotsOnGoal AS rmShotsOnGoal, rm.TotalShots AS rmTotalShots,
+               opp.ShotsOnGoal AS oppShotsOnGoal, opp.TotalShots AS oppTotalShots
+        FROM Fixtures f
+        JOIN FixtureStatistics rm ON rm.FixtureId = f.FixtureId AND rm.TeamId = @rm
+        JOIN FixtureStatistics opp ON opp.FixtureId = f.FixtureId AND opp.TeamId <> @rm
+        WHERE (f.HomeTeamId = @rm OR f.AwayTeamId = @rm) AND f.StatusShort = 'FT'
+        ORDER BY f.KickoffUtc DESC
+        {Limit(5)}
+        """, new { rm = RealMadridId })).ToList();
+
+    object? shotsTrend = null;
+    if (shotsRows.Count > 0)
+    {
+        // Convert.ToDouble en vez de un cast directo de dynamic -- algunas de estas
+        // columnas son NULL-ables en la base y un (double)(x ?? 0) sobre dynamic es
+        // frágil en tiempo de ejecución; Convert.ToDouble maneja null y numérico bien.
+        double AvgOf(Func<dynamic, dynamic> selector) =>
+            Math.Round(shotsRows.Average(r => Convert.ToDouble(selector(r) ?? 0)), 1);
+
+        shotsTrend = new
+        {
+            matches = shotsRows.Count,
+            avgShotsOnGoalFor = AvgOf(r => r.rmShotsOnGoal),
+            avgShotsOnGoalAgainst = AvgOf(r => r.oppShotsOnGoal),
+            avgTotalShotsFor = AvgOf(r => r.rmTotalShots),
+            avgTotalShotsAgainst = AvgOf(r => r.oppTotalShots),
+        };
+    }
+
+    return Results.Ok(new { match, x12, btts, over25, recentForm, shotsTrend, h2h = new { summary = h2hSummary, recent = h2hRecent } });
 });
 
 app.MapGet("/api/players", async (Func<IDbConnection> factory, string? position) =>
@@ -549,15 +585,91 @@ app.MapGet("/api/predictions/next/value", async (Func<IDbConnection> factory) =>
     };
     var best = candidates.OrderByDescending(c => c.modelProb - c.marketProb).First();
     double edge = best.modelProb - best.marketProb;
+    bool hasValue = edge > 0.03;
+
+    // Se guarda el "value bet" que de verdad se le mostró al usuario -- así después,
+    // una vez jugado el partido, /api/predictions/value-track-record puede medir si
+    // esa divergencia modelo-vs-mercado acertó o no. Se sobreescribe por partido (solo
+    // interesa el último cálculo antes del kickoff, con los momios más recientes).
+    if (hasValue)
+    {
+        // Resultado (H/D/A, mismo vocabulario que Predictions.ActualOutcome) que hace
+        // ganador a ESTE mercado para ESTE partido puntual -- depende de si el Madrid
+        // jugaba de local, por eso se resuelve aquí y no se asume fijo por mercado.
+        string side = best.market switch
+        {
+            "Empate" => "D",
+            "Gana el Real Madrid" => isHome ? "H" : "A",
+            "Gana el rival" => isHome ? "A" : "H",
+            _ => throw new InvalidOperationException($"Mercado desconocido: {best.market}"),
+        };
+        var upsertSql = isSqlite
+            ? """
+              INSERT INTO ValueBetLog (FixtureId, Market, RecommendedSide, ModelProb, MarketProb, EdgePct, LoggedAtUtc)
+              VALUES (@fid, @market, @side, @modelProb, @marketProb, @edgePct, @now)
+              ON CONFLICT(FixtureId) DO UPDATE SET
+                Market=excluded.Market, RecommendedSide=excluded.RecommendedSide, ModelProb=excluded.ModelProb,
+                MarketProb=excluded.MarketProb, EdgePct=excluded.EdgePct, LoggedAtUtc=excluded.LoggedAtUtc;
+              """
+            : """
+              MERGE dbo.ValueBetLog AS tgt
+              USING (SELECT @fid AS FixtureId) AS src ON tgt.FixtureId = src.FixtureId
+              WHEN MATCHED THEN UPDATE SET Market=@market, RecommendedSide=@side, ModelProb=@modelProb,
+                MarketProb=@marketProb, EdgePct=@edgePct, LoggedAtUtc=@now
+              WHEN NOT MATCHED THEN INSERT (FixtureId, Market, RecommendedSide, ModelProb, MarketProb, EdgePct, LoggedAtUtc)
+                VALUES (@fid, @market, @side, @modelProb, @marketProb, @edgePct, @now);
+              """;
+        await conn.ExecuteAsync(upsertSql, new
+        {
+            fid = fixtureId,
+            market = best.market,
+            side,
+            modelProb = best.modelProb,
+            marketProb = best.marketProb,
+            edgePct = Math.Round(edge * 100, 1),
+            now = DateTime.UtcNow,
+        });
+    }
 
     return Results.Ok(new
     {
-        hasValue = edge > 0.03,
+        hasValue,
         edgePct = Math.Round(edge * 100, 1),
         market = best.market,
         modelProbPct = Math.Round(best.modelProb * 100, 1),
         marketProbPct = Math.Round(best.marketProb * 100, 1),
     });
+});
+
+// Historial de aciertos de los value bets ya registrados -- responde la pregunta que
+// el dato aislado de arriba no puede: "¿esta sección de verdad ayuda, o es ruido?".
+app.MapGet("/api/predictions/value-track-record", async (Func<IDbConnection> factory) =>
+{
+    using var conn = factory();
+    var stats = await conn.QuerySingleAsync<dynamic>(
+        """
+        SELECT COUNT(*) AS total, SUM(CASE WHEN v.RecommendedSide = p.ActualOutcome THEN 1 ELSE 0 END) AS correct
+        FROM ValueBetLog v
+        JOIN Predictions p ON p.FixtureId = v.FixtureId AND p.Market = '1X2'
+        WHERE p.ActualOutcome IS NOT NULL
+        """);
+    var recent = await conn.QueryAsync<dynamic>(
+        $"""
+        SELECT {Top(10)} v.FixtureId AS fixtureId, v.Market AS market, v.EdgePct AS edgePct,
+               p.ActualOutcome AS actualOutcome,
+               CASE WHEN v.RecommendedSide = p.ActualOutcome THEN 1 ELSE 0 END AS wasCorrect,
+               f.KickoffUtc AS kickoffUtc,
+               CASE WHEN f.HomeTeamId=@rm THEN at.Name ELSE ht.Name END AS opponent
+        FROM ValueBetLog v
+        JOIN Predictions p ON p.FixtureId = v.FixtureId AND p.Market = '1X2'
+        JOIN Fixtures f ON f.FixtureId = v.FixtureId
+        JOIN Teams ht ON f.HomeTeamId = ht.TeamId
+        JOIN Teams at ON f.AwayTeamId = at.TeamId
+        WHERE p.ActualOutcome IS NOT NULL
+        ORDER BY f.KickoffUtc DESC
+        {Limit(10)}
+        """, new { rm = RealMadridId });
+    return Results.Ok(new { overall = stats, recent });
 });
 
 app.MapGet("/api/odds/next", async (Func<IDbConnection> factory) =>
@@ -904,13 +1016,39 @@ app.MapGet("/api/ratings/season-table", async (Func<IDbConnection> factory) =>
 app.MapGet("/api/podcast/history", async (Func<IDbConnection> factory) =>
 {
     using var conn = factory();
-    var rows = await conn.QueryAsync<dynamic>(
-        """
-        SELECT PodcastId AS podcastId, FixtureId AS fixtureId, Title AS title, EpisodeLabel AS episodeLabel,
-               YoutubeLink AS youtubeLink, GeneratedAtUtc AS generatedAtUtc
-        FROM PodcastHistory ORDER BY GeneratedAtUtc DESC
-        """);
-    return Results.Ok(rows);
+    try
+    {
+        // Última medición de vistas por episodio (si hay alguna) -- ver EpisodeMetrics.
+        // El JOIN se cae si la tabla todavía no existe (instalación vieja); en ese caso
+        // se responde igual, solo sin la columna de vistas, en vez de romper la pantalla.
+        var rows = await conn.QueryAsync<dynamic>(
+            """
+            SELECT ph.PodcastId AS podcastId, ph.FixtureId AS fixtureId, ph.Title AS title, ph.EpisodeLabel AS episodeLabel,
+                   ph.YoutubeLink AS youtubeLink, ph.GeneratedAtUtc AS generatedAtUtc,
+                   latest.ViewsCount AS latestViews, latest.MeasuredAtUtc AS viewsMeasuredAtUtc
+            FROM PodcastHistory ph
+            LEFT JOIN (
+                SELECT em.PodcastId, em.ViewsCount, em.MeasuredAtUtc
+                FROM EpisodeMetrics em
+                WHERE em.MeasuredAtUtc = (SELECT MAX(em2.MeasuredAtUtc) FROM EpisodeMetrics em2 WHERE em2.PodcastId = em.PodcastId)
+            ) latest ON latest.PodcastId = ph.PodcastId
+            ORDER BY ph.GeneratedAtUtc DESC
+            """);
+        return Results.Ok(rows);
+    }
+    catch
+    {
+        // Mismas columnas que el caso feliz (latestViews/viewsMeasuredAtUtc en null) --
+        // así el frontend siempre ve la misma forma de respuesta, nunca un campo ausente.
+        var rows = await conn.QueryAsync<dynamic>(
+            """
+            SELECT PodcastId AS podcastId, FixtureId AS fixtureId, Title AS title, EpisodeLabel AS episodeLabel,
+                   YoutubeLink AS youtubeLink, GeneratedAtUtc AS generatedAtUtc,
+                   NULL AS latestViews, NULL AS viewsMeasuredAtUtc
+            FROM PodcastHistory ORDER BY GeneratedAtUtc DESC
+            """);
+        return Results.Ok(rows);
+    }
 });
 
 app.MapPost("/api/podcast/history", async (Func<IDbConnection> factory, PodcastLogRequest req) =>
@@ -921,6 +1059,31 @@ app.MapPost("/api/podcast/history", async (Func<IDbConnection> factory, PodcastL
     await conn.ExecuteAsync(
         "INSERT INTO PodcastHistory (FixtureId, Title, EpisodeLabel, YoutubeLink) VALUES (@fid, @title, @ep, @link)",
         new { fid = req.FixtureId, title = req.Title, ep = req.EpisodeLabel, link = req.YoutubeLink });
+    return Results.Ok(new { ok = true });
+});
+
+// Vistas/engagement por episodio -- cargadas a mano (no hay integración con YouTube
+// Analytics), para empezar a construir un dataset propio de "qué formato funciona"
+// en vez de adivinar, mismo principio que el resto del proyecto.
+app.MapPost("/api/podcast/{podcastId:int}/metrics", async (Func<IDbConnection> factory, int podcastId, EpisodeMetricRequest req) =>
+{
+    if (req.ViewsCount < 0) return Results.BadRequest(new { error = "Las vistas no pueden ser negativas." });
+    using var conn = factory();
+    if (isSqlite)
+    {
+        await conn.ExecuteAsync(
+            """
+            CREATE TABLE IF NOT EXISTS EpisodeMetrics (
+                EpisodeMetricId INTEGER PRIMARY KEY,
+                PodcastId INTEGER NOT NULL,
+                ViewsCount INTEGER NOT NULL,
+                MeasuredAtUtc TEXT
+            )
+            """);
+    }
+    await conn.ExecuteAsync(
+        "INSERT INTO EpisodeMetrics (PodcastId, ViewsCount, MeasuredAtUtc) VALUES (@pid, @views, @now)",
+        new { pid = podcastId, views = req.ViewsCount, now = DateTime.UtcNow });
     return Results.Ok(new { ok = true });
 });
 
@@ -1429,6 +1592,7 @@ record PodcastLogRequest(int FixtureId, string Title, string EpisodeLabel, strin
 record LineupSlot(string SlotPosition, int PlayerId);
 record MediaLogRequest(string Kind, string FileName, int? FixtureId);
 record ApiKeyRequest(string ApiKey);
+record EpisodeMetricRequest(int ViewsCount);
 
 class RefreshState
 {

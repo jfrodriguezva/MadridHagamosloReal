@@ -24,6 +24,13 @@ type FullPrediction = {
   btts: { probYes: number } | null;
   over25: { probYes: number } | null;
   recentForm?: ("W" | "D" | "L")[];
+  shotsTrend?: {
+    matches: number;
+    avgShotsOnGoalFor: number;
+    avgShotsOnGoalAgainst: number;
+    avgTotalShotsFor: number;
+    avgTotalShotsAgainst: number;
+  } | null;
   h2h?: {
     summary: { total: number; wins: number; draws: number; losses: number };
     recent: {
@@ -77,6 +84,21 @@ type ValueResponse = {
   modelProbPct?: number;
   marketProbPct?: number;
 };
+
+type ValueTrackRecord = {
+  overall: { total: number; correct: number };
+  recent: { fixtureId: number; market: string; edgePct: number; opponent: string; wasCorrect: number; kickoffUtc: string }[];
+};
+
+async function getValueTrackRecord(): Promise<ValueTrackRecord | null> {
+  try {
+    const res = await fetch(`${API}/api/predictions/value-track-record`, { cache: "no-store" });
+    if (!res.ok) return null;
+    return (await res.json()) as ValueTrackRecord;
+  } catch {
+    return null;
+  }
+}
 
 async function getScorers(): Promise<ScorersResponse | null> {
   try {
@@ -144,12 +166,13 @@ function confidenceAdvice(prob: number | undefined): { label: string; text: stri
 }
 
 export default async function PrediccionPage() {
-  const [data, odds, scorers, value, availability] = await Promise.all([
+  const [data, odds, scorers, value, availability, valueTrackRecord] = await Promise.all([
     getPrediction(),
     getOdds(),
     getScorers(),
     getValue(),
     getAvailability(),
+    getValueTrackRecord(),
   ]);
   const avgBookImpliedAway = odds?.bookmakers?.length
     ? odds.bookmakers.reduce((s, b) => s + b.impliedAway, 0) / odds.bookmakers.length
@@ -228,6 +251,32 @@ export default async function PrediccionPage() {
                     )}
                   </div>
                 )}
+              </div>
+            )}
+
+            {data.shotsTrend && (
+              <div className="rounded-xl p-5 border" style={{ background: "var(--surface)", borderColor: "var(--line)" }}>
+                <span className="font-mono text-[11px] uppercase tracking-wider" style={{ color: "var(--muted)" }}>
+                  Tendencia de disparos — últimos {data.shotsTrend.matches} partidos
+                </span>
+                <div className="grid grid-cols-2 gap-4 mt-3">
+                  <div>
+                    <div className="text-[11px]" style={{ color: "var(--muted)" }}>A favor (al arco / totales)</div>
+                    <div className="font-display text-2xl font-extrabold" style={{ color: "var(--good)" }}>
+                      {data.shotsTrend.avgShotsOnGoalFor} <span className="text-sm font-normal" style={{ color: "var(--muted)" }}>/ {data.shotsTrend.avgTotalShotsFor}</span>
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[11px]" style={{ color: "var(--muted)" }}>En contra (al arco / totales)</div>
+                    <div className="font-display text-2xl font-extrabold" style={{ color: "var(--bad)" }}>
+                      {data.shotsTrend.avgShotsOnGoalAgainst} <span className="text-sm font-normal" style={{ color: "var(--muted)" }}>/ {data.shotsTrend.avgTotalShotsAgainst}</span>
+                    </div>
+                  </div>
+                </div>
+                <p className="text-[11px] mt-2" style={{ color: "var(--muted)" }}>
+                  Disparos por partido, no goles esperados (xG) — API-Football no lo trae en este plan. Sirve para ver
+                  si el equipo genera/concede más peligro del que el resultado esconde.
+                </p>
               </div>
             )}
 
@@ -362,6 +411,12 @@ export default async function PrediccionPage() {
                     implica {value.marketProbPct}% — una diferencia de {value.edgePct} puntos. No es una
                     recomendación, es información de dónde discrepamos más del consenso.
                   </p>
+                  {valueTrackRecord && valueTrackRecord.overall.total > 0 && (
+                    <p className="text-[11px] mt-2 pt-2" style={{ color: "var(--muted)", borderTop: "1px solid rgba(168,121,26,.25)" }}>
+                      Historial: {valueTrackRecord.overall.correct}/{valueTrackRecord.overall.total} veces que esta
+                      señal apuntó al lado correcto ({Math.round((valueTrackRecord.overall.correct / valueTrackRecord.overall.total) * 100)}%).
+                    </p>
+                  )}
                 </div>
               </div>
             )}

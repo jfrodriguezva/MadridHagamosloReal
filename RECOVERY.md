@@ -75,9 +75,28 @@ Requiere en el equipo nuevo:
 ### Restaurar la base de datos
 
 Si tienes un `.bak` de SQL Server, restáuralo como `MadridHagamosloReal`. Si
-no, `desktop/madrid.db` es un snapshot en SQLite con todo el histórico — se
-puede usar como referencia, pero el flujo normal de desarrollo asume SQL
-Server.
+no lo tienes (el caso más común al mover el proyecto a otro equipo — nos pasó
+en esta misma máquina), corre:
+
+```powershell
+.\ml-service\sql\bootstrap-dev-db.ps1
+```
+
+Crea la base (si no existe) y aplica los `00N_*.sql` en orden — deja el
+esquema completo pero **vacío**, sin histórico. Usa autenticación de Windows
+por defecto (`-Server`/`-User`/`-Password` si necesitas otra cosa). Guarda la
+cadena de conexión real con `dotnet user-secrets set` desde `api/` (ver
+sección de arriba) — nunca la hardcodees en el código.
+
+Para tener **datos reales** sin correr el pipeline completo de `fetch_*.py`
+(que necesita tu propia API key y horas de backfill), la alternativa rápida
+es apuntar la API a `desktop/madrid.db` (SQLite, con todo el histórico ya
+cargado) en vez de a SQL Server:
+
+```bash
+cd api
+DB_PROVIDER=sqlite SQLITE_PATH="../desktop/madrid.db" dotnet run --urls http://localhost:10001
+```
 
 ### Instalar dependencias y levantar los 3 procesos
 
@@ -222,9 +241,10 @@ documentan los "Gotchas" de abajo).
 - `api.Tests/` — xUnit + `WebApplicationFactory<Program>` contra un SQLite
   temporal con datos sembrados a mano (no necesita SQL Server). Corre con
   `cd api.Tests && dotnet test`. Cubre accuracy/baseline, health check,
-  disponibilidad de jugadores y el endpoint de transcripción (el `/api/media/
+  disponibilidad de jugadores, el endpoint de transcripción (el `/api/media/
   transcribe` corre un proceso Python real, sin mocks, y fija el
-  comportamiento honesto de hoy: falla claro si falta `faster-whisper`).
+  comportamiento honesto de hoy: falla claro si falta `faster-whisper`),
+  tracking de value bets y métricas de episodios.
 - `ml-service/tests/` — pytest sobre la matemática pura (el predictor Poisson
   de `compare_baseline_predictor.py` y `rps_3class`/`RESULT_TO_IDX` de
   `train_model.py`, incluyendo un test que protege contra el bug real ya
@@ -235,6 +255,40 @@ documentan los "Gotchas" de abajo).
   .venv/Scripts/python.exe -m pip install -r requirements-dev.txt
   .venv/Scripts/python.exe -m pytest tests/ -v
   ```
+
+**CI (`.github/workflows/ci.yml`).** Los 19+ tests de arriba ahora corren
+solos en cada push/PR a `main` — 3 jobs (`api-tests`, `web-checks`,
+`ml-tests`) en `windows-latest` (el proyecto es intrínsecamente Windows;
+Linux rompería con `node_modules`/`ml-service/.venv` committeados tal cual).
+Revisa la pestaña Actions de GitHub después de pushear para confirmar que
+pasó — no se puede verificar localmente más allá de que el YAML sea válido.
+
+---
+
+## Analista deportivo y creador de contenido
+
+**Tracking de value bets.** `POST` implícito dentro de `/api/predictions/
+next/value`: cada vez que la señal detecta valor (`hasValue=true`), guarda
+un snapshot en `ValueBetLog` (se sobreescribe por partido, solo interesa el
+último cálculo antes del kickoff). `GET /api/predictions/value-track-record`
+compara esos snapshots contra `Predictions.ActualOutcome` una vez jugado el
+partido — responde "¿esta señal de verdad ayuda?" con datos, no solo la
+mostraba aislada. Visible en Predicción, debajo de la tarjeta de value bet.
+
+**Tendencia de disparos.** `shotsTrend` en `/api/predictions/next/full` —
+promedio de disparos al arco/totales a favor y en contra en los últimos 5
+partidos con datos, desde `FixtureStatistics` (ya cargada). **No es xG
+real** — API-Football no lo trae en el plan usado y no está en el esquema;
+se etiqueta honestamente como "disparos" en la UI, nunca como "expected
+goals".
+
+**Vistas por episodio.** `POST /api/podcast/{id}/metrics` (`{viewsCount}`)
+guarda una medición en `EpisodeMetrics` (varias por episodio permiten ver la
+curva, no solo un número congelado); `GET /api/podcast/history` devuelve la
+más reciente por episodio (`latestViews`). Se carga a mano desde la columna
+"VISTAS" del histórico en Podcast — no hay integración con YouTube
+Analytics. Igual que `PlayerAvailability`, la tabla se crea sola en SQLite
+la primera vez que se guarda una medición.
 
 ---
 

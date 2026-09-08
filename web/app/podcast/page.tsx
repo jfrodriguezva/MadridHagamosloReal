@@ -11,7 +11,15 @@ import AutoInfographic from "./AutoInfographic";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5080";
 
-type HistoryItem = { podcastId: number; fixtureId: number; title: string; episodeLabel: string; youtubeLink: string; generatedAtUtc: string };
+type HistoryItem = {
+  podcastId: number;
+  fixtureId: number;
+  title: string;
+  episodeLabel: string;
+  youtubeLink: string;
+  generatedAtUtc: string;
+  latestViews: number | null;
+};
 type OutlineBlock = { block: string; minutes: number; note: string };
 type ClipSuggestion = { label: string; fromMinute: number; toMinute: number };
 type Suggestions = {
@@ -150,6 +158,7 @@ export default function PodcastPage() {
                   <th className="text-left px-4 py-2 font-mono text-[10px]" style={{ color: "var(--muted)" }}>EPISODIO</th>
                   <th className="text-left px-4 py-2 font-mono text-[10px]" style={{ color: "var(--muted)" }}>TÍTULO</th>
                   <th className="text-left px-4 py-2 font-mono text-[10px]" style={{ color: "var(--muted)" }}>LINK</th>
+                  <th className="text-right px-4 py-2 font-mono text-[10px]" style={{ color: "var(--muted)" }}>VISTAS</th>
                   <th className="text-right px-4 py-2 font-mono text-[10px]" style={{ color: "var(--muted)" }}>FECHA</th>
                 </tr>
               </thead>
@@ -162,6 +171,9 @@ export default function PodcastPage() {
                       <a href={h.youtubeLink} target="_blank" rel="noreferrer" style={{ color: "var(--purple)" }}>
                         ver video
                       </a>
+                    </td>
+                    <td className="px-4 py-2 text-right">
+                      <ViewsCell podcastId={h.podcastId} currentViews={h.latestViews} onSaved={loadHistory} />
                     </td>
                     <td className="px-4 py-2 text-right font-mono text-[11px]" style={{ color: "var(--muted)" }}>
                       {new Date(h.generatedAtUtc).toLocaleDateString("es-ES", { day: "2-digit", month: "short", year: "numeric" })}
@@ -368,5 +380,60 @@ export default function PodcastPage() {
         <MediaHistory refreshKey={0} />
       </div>
     </div>
+  );
+}
+
+// Vistas cargadas a mano (no hay integración con YouTube Analytics) -- clic para
+// editar, Enter/blur para guardar. Muestra "—" hasta la primera medición.
+function ViewsCell({ podcastId, currentViews, onSaved }: { podcastId: number; currentViews: number | null; onSaved: () => void }) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(currentViews != null ? String(currentViews) : "");
+  const [saving, setSaving] = useState(false);
+
+  async function save() {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n < 0) {
+      setEditing(false);
+      return;
+    }
+    setSaving(true);
+    try {
+      await fetch(`${API}/api/podcast/${podcastId}/metrics`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ viewsCount: Math.round(n) }),
+      });
+      onSaved();
+    } finally {
+      setSaving(false);
+      setEditing(false);
+    }
+  }
+
+  if (editing) {
+    return (
+      <input
+        type="number"
+        min={0}
+        autoFocus
+        value={value}
+        disabled={saving}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={save}
+        onKeyDown={(e) => e.key === "Enter" && save()}
+        className="w-20 rounded border px-1.5 py-0.5 text-right font-mono text-[11px]"
+        style={{ borderColor: "var(--line)" }}
+      />
+    );
+  }
+  return (
+    <button
+      onClick={() => setEditing(true)}
+      className="font-mono text-[11px]"
+      style={{ color: currentViews != null ? "var(--text)" : "var(--muted)" }}
+      title="Clic para actualizar las vistas"
+    >
+      {currentViews != null ? currentViews.toLocaleString("es-ES") : "— editar"}
+    </button>
   );
 }
