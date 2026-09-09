@@ -8,8 +8,10 @@ import MediaHistory from "./MediaHistory";
 import AutoVideoGenerator from "./AutoVideoGenerator";
 import GoalClips from "./GoalClips";
 import AutoInfographic from "./AutoInfographic";
+import PressConference from "./PressConference";
+import ScreenRecorder from "./ScreenRecorder";
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5080";
+import { API } from "../lib/api";
 
 type HistoryItem = {
   podcastId: number;
@@ -42,7 +44,8 @@ export default function PodcastPage() {
   const [episodeLabel, setEpisodeLabel] = useState("");
   const [youtubeLink, setYoutubeLink] = useState("");
   const [publishMessage, setPublishMessage] = useState<string | null>(null);
-  const [tab, setTab] = useState<"contenido" | "editor" | "imagen">("contenido");
+  const [tab, setTab] = useState<"contenido" | "grabar" | "editor" | "imagen">("contenido");
+  const [mediaKey, setMediaKey] = useState(0);
 
   function loadAnalysis() {
     setLoading(true);
@@ -127,6 +130,17 @@ export default function PodcastPage() {
             CONTENIDO
           </button>
           <button
+            onClick={() => setTab("grabar")}
+            className="font-mono text-xs px-4 py-2 rounded-full"
+            style={{
+              background: tab === "grabar" ? "var(--purple)" : "transparent",
+              color: tab === "grabar" ? "#fff" : "var(--muted)",
+              border: tab === "grabar" ? "none" : "1px solid var(--line)",
+            }}
+          >
+            GRABAR LOCAL
+          </button>
+          <button
             onClick={() => setTab("editor")}
             className="font-mono text-xs px-4 py-2 rounded-full"
             style={{
@@ -192,6 +206,10 @@ export default function PodcastPage() {
 
         {tab === "contenido" && (
         <>
+        {/* La previa (próximo partido) va primero porque así va en el video:
+            se graba al final de un episodio pero abre el siguiente. */}
+        <PressConference />
+
         <div className="rounded-xl p-5 border" style={{ background: "var(--surface)", borderColor: "var(--line)" }}>
           <div className="flex justify-between items-baseline">
             <span className="font-mono text-[11px] uppercase tracking-wider" style={{ color: "var(--muted)" }}>
@@ -349,6 +367,8 @@ export default function PodcastPage() {
         </>
         )}
 
+        {tab === "grabar" && <ScreenRecorder onSaved={() => setMediaKey((k) => k + 1)} />}
+
         {tab === "editor" && (
           <div className="rounded-xl border overflow-hidden" style={{ background: "var(--surface)", borderColor: "var(--line)" }}>
             <div className="p-5" style={{ borderBottom: "1px solid var(--line)" }}>
@@ -377,7 +397,7 @@ export default function PodcastPage() {
           </div>
         )}
 
-        <MediaHistory refreshKey={0} />
+        <MediaHistory refreshKey={mediaKey} />
       </div>
     </div>
   );

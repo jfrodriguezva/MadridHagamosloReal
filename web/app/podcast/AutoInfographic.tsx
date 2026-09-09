@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5080";
+import { API } from "../lib/api";
 const REAL_MADRID_ID = 541;
 const SIZE = 1080;
 const PURPLE = "#2b2350", GOLD = "#a8791a", INK = "#1a1a24", CREAM = "#f7f6f2";

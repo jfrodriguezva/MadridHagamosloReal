@@ -168,13 +168,40 @@ cd ../installer
 
 **Qué SÍ va dentro del instalable:** WPF+WebView2, API self-contained, build
 de producción del web, `madrid.db` (SQLite con histórico), Python portátil
-+ `db_sqlite.py` + `refresh_current.py` (para el botón "Actualizar datos"),
-plantilla `.env.example`.
++ `db_sqlite.py` + `refresh_current.py` (para el botón "Actualizar datos")
++ `fetch_presser.py` (para el botón "Traer rueda de prensa", que no gasta
+cuota de API-Football porque lee RSS públicos de buscadores), plantilla
+`.env.example`.
 
 **Qué NO va dentro (a propósito):** tu API key real (la pegas tú después de
 instalar, en `.env`), el pipeline de entrenamiento de `ml-service/` (no hace
 falta en runtime, solo para reentrenar el modelo), SQL Server (el instalable
 es 100% SQLite).
+
+### Sin Inno Setup: la versión portable
+
+Los pasos 1-3 (web, API y escritorio) no necesitan Inno Setup — eso solo hace
+falta para empaquetar el `.exe` de instalación. Copiando esas tres salidas con
+el mismo mapeo que la sección `[Files]` del `.iss` queda una carpeta que la app
+reconoce como **instalada** (`IsInstalled` en `MainWindow.xaml.cs` comprueba que
+`api\Madrid.Api.exe` y `web\server.js` sean hermanos de `desktop\`), o sea con
+SQLite y el botón "Actualizar datos" funcionando:
+
+```
+MadridHagamosloReal-portable\
+  desktop\   <- desktop\bin\Release\net10.0-windows\win-x64\publish\*
+  api\       <- api\publish\*
+  web\       <- web\.next\standalone\*
+  data\      <- desktop\madrid.db  (renombrado a data\madrid.db)
+  runtime\   <- installer\runtime\node.exe + installer\runtime\python\
+  scripts\   <- ml-service\data\{db_sqlite,refresh_current}.py + .env.example
+  install-service.ps1, uninstall-service.ps1
+```
+
+Se ejecuta con `desktop\Madrid.Desktop.exe` y levanta sola API y portal. Pesa
+~458 MB (el `.exe` del instalador comprime bastante más). Sirve para probar el
+modo instalado sin instalar nada, pero para llevarla a otra máquina sigue
+siendo preferible el instalador.
 
 ---
 
@@ -204,6 +231,21 @@ redescubriéndolos si algo similar reaparece:
    servicio arrancaba "Running" pero abría una base de datos vacía/inexistente
    (portal cargaba sin datos). Arreglado a `$PSScriptRoot\api` y
    `$PSScriptRoot\data\madrid.db`.
+
+4. **La ventana no cabía en pantallas con escala de Windows.** El XAML pide
+   `Height="900" Width="1400"`, pero eso son DIPs: en 1536x864 al 125% el
+   área útil es 1229x653 DIPs. Con `WindowStartupLocation="CenterScreen"`, el
+   centrado dejaba la barra de título ~124 DIPs POR ENCIMA del borde superior
+   — la app quedaba sin botones de minimizar/maximizar/cerrar y sin nada de
+   dónde arrastrarla. Arreglado en `MainWindow_SourceInitialized`, que ajusta
+   el tamaño al área de trabajo real y recentra, más un menú en el ícono de
+   bandeja (Mostrar / Maximizar / Minimizar / Centrar en pantalla / Salir) que
+   sirve de rescate si la ventana vuelve a quedar inalcanzable.
+   **Cuidado al tocar esto:** poner `WindowState = Maximized` dentro de
+   `SourceInitialized` rompe WebView2 — su controlador se crea después, y
+   falla con `COMException 0x8007139F` dejando la ventana en blanco. El
+   maximizado inicial va en `MainWindow_Loaded`, ya con
+   `EnsureCoreWebView2Async` completado.
 
 Si reinstalas sobre una versión vieja y el servicio quedó mal registrado, no
 hace falta reinstalar todo — basta con:

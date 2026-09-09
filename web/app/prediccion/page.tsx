@@ -1,6 +1,6 @@
 import NavBar from "../components/NavBar";
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5080";
+import { API } from "../lib/api";
 const REAL_MADRID_ID = 541;
 
 type FullPrediction = {

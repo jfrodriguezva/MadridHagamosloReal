@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5080";
+import { API } from "../lib/api";
 const W = 1080, H = 1920;
 
 const PURPLE = "#2b2350", GOLD = "#a8791a", INK = "#1a1a24";
