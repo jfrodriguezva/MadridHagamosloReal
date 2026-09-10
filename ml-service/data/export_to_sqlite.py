@@ -30,6 +30,7 @@ TABLES = [
     "MatchEvents2", "MatchPlayerRatings", "UserLineups", "UserLineupPlayers",
     "UserPlayerRatings", "OddsSnapshots", "PodcastHistory", "GeneratedMedia",
     "PlayerAvailability",
+    "PressConferences", "PressTopics",
 ]
 
 # Columnas IDENTITY en SQL Server -- en SQLite, "INTEGER PRIMARY KEY" de una
@@ -43,6 +44,8 @@ IDENTITY_COLUMNS = {
     "Predictions": "PredictionId",
     "UserLineups": "UserLineupId",
     "GeneratedMedia": "MediaId",
+    "PressConferences": "PressConferenceId",
+    "PressTopics": "PressTopicId",
 }
 
 

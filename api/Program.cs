@@ -66,6 +66,11 @@ string LimitP(string param) => isSqlite ? $"LIMIT {param}" : "";
 
 var sqlitePath = builder.Configuration["SQLITE_PATH"] ?? Environment.GetEnvironmentVariable("SQLITE_PATH") ?? "madrid.db";
 
+// Opcionales, solo para desarrollo: dónde está el intérprete de Python y la
+// carpeta de scripts. Sin ellos se usa el Python portátil que trae el instalable.
+var pythonExeOverride = builder.Configuration["PYTHON_EXE"] ?? Environment.GetEnvironmentVariable("PYTHON_EXE");
+var scriptsDirOverride = builder.Configuration["SCRIPTS_DIR"] ?? Environment.GetEnvironmentVariable("SCRIPTS_DIR");
+
 if (isSqlite)
 {
     var sqliteConnString = $"Data Source={sqlitePath}";
@@ -86,6 +91,113 @@ else
 }
 
 var app = builder.Build();
+
+// Las tablas de rueda de prensa se agregaron cuando ya existían instalaciones
+// con su propio madrid.db -- se crean aquí de forma idempotente para que
+// actualizar la app no obligue a regenerar la base ni a correr la migración a
+// mano. El archivo canónico para SQL Server sigue siendo
+// ml-service/sql/005_press_conferences.sql.
+{
+    using var schemaConn = app.Services.GetRequiredService<Func<IDbConnection>>()();
+    var ddl = isSqlite
+        ? new[]
+        {
+            """
+            CREATE TABLE IF NOT EXISTS PressConferences (
+                PressConferenceId INTEGER PRIMARY KEY,
+                FixtureId INTEGER NOT NULL,
+                CoachName TEXT NOT NULL,
+                Source TEXT NOT NULL,
+                SourceName TEXT NULL,
+                SourceUrl TEXT NULL,
+                Headline TEXT NULL,
+                PublishedAtUtc TEXT NULL,
+                FetchedAtUtc TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS PressTopics (
+                PressTopicId INTEGER PRIMARY KEY,
+                PressConferenceId INTEGER NOT NULL,
+                Topic TEXT NULL,
+                Quote TEXT NULL,
+                Angle TEXT NULL,
+                Selected INTEGER NOT NULL DEFAULT 0,
+                SortOrder INTEGER NOT NULL DEFAULT 0
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS IX_PressConferences_Fixture ON PressConferences(FixtureId)",
+            // Las tablas de las features nuevas (value bets, métricas de episodio,
+            // disponibilidad de jugadores) solo se crean en las migraciones numeradas
+            // de ml-service/sql, que corren contra SQL Server. En SQLite el histórico
+            // vive en un madrid.db ya existente al que nadie le corre migraciones, así
+            // que se crean aquí de forma idempotente igual que las de rueda de prensa.
+            // Los INSERT pasan siempre el timestamp explícito, por eso no llevan DEFAULT.
+            """
+            CREATE TABLE IF NOT EXISTS ValueBetLog (
+                FixtureId INTEGER NOT NULL PRIMARY KEY,
+                Market TEXT NOT NULL,
+                RecommendedSide TEXT NOT NULL,
+                ModelProb REAL NOT NULL,
+                MarketProb REAL NOT NULL,
+                EdgePct REAL NOT NULL,
+                LoggedAtUtc TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS EpisodeMetrics (
+                EpisodeMetricId INTEGER PRIMARY KEY,
+                PodcastId INTEGER NOT NULL,
+                ViewsCount INTEGER NOT NULL,
+                MeasuredAtUtc TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS PlayerAvailability (
+                PlayerId INTEGER NOT NULL,
+                FixtureId INTEGER NOT NULL,
+                Type TEXT NULL,
+                Reason TEXT NULL,
+                IngestedAtUtc TEXT NOT NULL,
+                PRIMARY KEY (PlayerId, FixtureId)
+            )
+            """,
+        }
+        : new[]
+        {
+            """
+            IF OBJECT_ID('dbo.PressConferences', 'U') IS NULL
+            CREATE TABLE dbo.PressConferences (
+                PressConferenceId INT IDENTITY PRIMARY KEY,
+                FixtureId INT NOT NULL REFERENCES dbo.Fixtures(FixtureId),
+                CoachName NVARCHAR(120) NOT NULL,
+                Source NVARCHAR(20) NOT NULL,
+                SourceName NVARCHAR(160) NULL,
+                SourceUrl NVARCHAR(500) NULL,
+                Headline NVARCHAR(400) NULL,
+                PublishedAtUtc DATETIME2 NULL,
+                FetchedAtUtc DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+            )
+            """,
+            """
+            IF OBJECT_ID('dbo.PressTopics', 'U') IS NULL
+            CREATE TABLE dbo.PressTopics (
+                PressTopicId INT IDENTITY PRIMARY KEY,
+                PressConferenceId INT NOT NULL REFERENCES dbo.PressConferences(PressConferenceId),
+                Topic NVARCHAR(300) NULL,
+                Quote NVARCHAR(MAX) NULL,
+                Angle NVARCHAR(MAX) NULL,
+                Selected BIT NOT NULL DEFAULT 0,
+                SortOrder INT NOT NULL DEFAULT 0
+            )
+            """,
+            """
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_PressConferences_Fixture')
+            CREATE INDEX IX_PressConferences_Fixture ON dbo.PressConferences(FixtureId)
+            """,
+        };
+    foreach (var stmt in ddl) schemaConn.Execute(stmt);
+}
 
 app.UseCors();
 app.UseSerilogRequestLogging();
@@ -324,8 +436,16 @@ app.MapGet("/api/predictions/next/full", async (Func<IDbConnection> factory) =>
         // Convert.ToDouble en vez de un cast directo de dynamic -- algunas de estas
         // columnas son NULL-ables en la base y un (double)(x ?? 0) sobre dynamic es
         // frágil en tiempo de ejecución; Convert.ToDouble maneja null y numérico bien.
-        double AvgOf(Func<dynamic, dynamic> selector) =>
-            Math.Round(shotsRows.Average(r => Convert.ToDouble(selector(r) ?? 0)), 1);
+        // El promedio se hace a mano en vez de con .Average(): shotsRows es
+        // List<dynamic>, así que .Average() y Math.Round() se resolverían en tiempo
+        // de ejecución y revientan con "Cannot implicitly convert double to int"
+        // cuando SQLite devuelve estas columnas como REAL en vez de INTEGER.
+        double AvgOf(Func<dynamic, dynamic> selector)
+        {
+            double suma = 0;
+            foreach (var fila in shotsRows) suma += Convert.ToDouble(selector(fila) ?? 0);
+            return Math.Round(suma / shotsRows.Count, 1);
+        }
 
         shotsTrend = new
         {
@@ -1254,6 +1374,182 @@ app.MapGet("/api/podcast/suggestions/{fixtureId:int}", async (Func<IDbConnection
     return Results.Ok(new { titles, hashtags, talkingPoints, outline, clipSuggestions });
 });
 
+// --- Rueda de prensa previa al próximo partido ------------------------------
+// API-Football no expone ruedas de prensa, así que estos datos entran por dos
+// vías que conviven en PressConferences.Source: 'buscador' (fetch_presser.py
+// trae citas textuales ya publicadas, con medio y link) y 'claude'/'manual'
+// (temas ya sintetizados, cargados por POST /api/press/manual). La app nunca
+// deduce sola de qué habló el técnico a partir de un texto libre -- muestra
+// citas reales y el usuario decide cuáles son los temas del episodio.
+
+app.MapGet("/api/press/next", async (Func<IDbConnection> factory) =>
+{
+    using var conn = factory();
+    var fixture = await conn.QuerySingleOrDefaultAsync<dynamic>(
+        $"""
+        SELECT {Top(1)} f.FixtureId AS fixtureId, f.KickoffUtc AS kickoffUtc,
+               CASE WHEN f.HomeTeamId=@rm THEN at.Name ELSE ht.Name END AS rival
+        FROM Fixtures f JOIN Teams ht ON f.HomeTeamId=ht.TeamId JOIN Teams at ON f.AwayTeamId=at.TeamId
+        WHERE (f.HomeTeamId=@rm OR f.AwayTeamId=@rm) AND f.StatusShort='NS'
+        ORDER BY f.KickoffUtc ASC
+        {Limit(1)}
+        """, new { rm = RealMadridId });
+
+    var coachName = await conn.QuerySingleOrDefaultAsync<string>(
+        $"""
+        SELECT {Top(1)} co.Name FROM CoachCareer cc JOIN Coaches co ON cc.CoachId = co.CoachId
+        WHERE cc.TeamId = @rm ORDER BY cc.StartDate DESC
+        {Limit(1)}
+        """, new { rm = RealMadridId });
+
+    if (fixture is null)
+        return Results.Ok(new { fixtureId = (int?)null, rival = (string?)null, kickoffUtc = (string?)null, coachName, conferences = Array.Empty<object>() });
+
+    int fixtureId = (int)fixture.fixtureId;
+
+    var confs = (await conn.QueryAsync<dynamic>(
+        """
+        SELECT PressConferenceId AS pressConferenceId, Source AS source, SourceName AS sourceName,
+               SourceUrl AS sourceUrl, Headline AS headline, PublishedAtUtc AS publishedAtUtc,
+               FetchedAtUtc AS fetchedAtUtc, CoachName AS coachName
+        FROM PressConferences WHERE FixtureId = @id ORDER BY PressConferenceId DESC
+        """, new { id = fixtureId })).ToList();
+
+    var topics = (await conn.QueryAsync<dynamic>(
+        """
+        SELECT t.PressTopicId AS pressTopicId, t.PressConferenceId AS pressConferenceId, t.Topic AS topic,
+               t.Quote AS quote, t.Angle AS angle, t.Selected AS selected, t.SortOrder AS sortOrder
+        FROM PressTopics t JOIN PressConferences c ON t.PressConferenceId = c.PressConferenceId
+        WHERE c.FixtureId = @id ORDER BY t.SortOrder, t.PressTopicId
+        """, new { id = fixtureId })).ToList();
+
+    var conferences = confs.Select(c =>
+    {
+        int cid = (int)c.pressConferenceId;
+        return new
+        {
+            pressConferenceId = cid,
+            source = (string)c.source,
+            sourceName = (string?)c.sourceName,
+            sourceUrl = (string?)c.sourceUrl,
+            headline = (string?)c.headline,
+            publishedAtUtc = c.publishedAtUtc?.ToString(),
+            fetchedAtUtc = c.fetchedAtUtc?.ToString(),
+            coachName = (string)c.coachName,
+            topics = topics.Where(t => (int)t.pressConferenceId == cid).Select(t => new
+            {
+                pressTopicId = (int)t.pressTopicId,
+                topic = (string?)t.topic,
+                quote = (string?)t.quote,
+                angle = (string?)t.angle,
+                // BIT en SQL Server llega como bool; INTEGER en SQLite llega como long
+                selected = Convert.ToBoolean(t.selected),
+                sortOrder = (int)t.sortOrder,
+            }).ToList(),
+        };
+    }).ToList();
+
+    return Results.Ok(new { fixtureId, rival = (string)fixture.rival, kickoffUtc = fixture.kickoffUtc?.ToString(), coachName, conferences });
+});
+
+// Curación: el usuario titula el tema, escribe su ángulo y marca si entra al guion.
+app.MapPost("/api/press/topics", async (Func<IDbConnection> factory, PressTopicUpdate req) =>
+{
+    using var conn = factory();
+    var affected = await conn.ExecuteAsync(
+        "UPDATE PressTopics SET Topic=@topic, Angle=@angle, Selected=@selected WHERE PressTopicId=@id",
+        new { topic = req.Topic, angle = req.Angle, selected = req.Selected, id = req.PressTopicId });
+    return affected == 0 ? Results.NotFound() : Results.Ok(new { ok = true });
+});
+
+// Alta manual de una rueda de prensa ya sintetizada. Es la vía que uso cuando
+// le pido a Claude que investigue la rueda de la semana (Source='claude'), y
+// también sirve para teclearla a mano viéndola en video (Source='manual').
+app.MapPost("/api/press/manual", async (Func<IDbConnection> factory, PressManualRequest req) =>
+{
+    using var conn = factory();
+
+    int fixtureId;
+    if (req.FixtureId is int given) fixtureId = given;
+    else
+    {
+        var next = await conn.QuerySingleOrDefaultAsync<int?>(
+            $"""
+            SELECT {Top(1)} FixtureId FROM Fixtures
+            WHERE (HomeTeamId=@rm OR AwayTeamId=@rm) AND StatusShort='NS'
+            ORDER BY KickoffUtc ASC
+            {Limit(1)}
+            """, new { rm = RealMadridId });
+        if (next is null) return Results.BadRequest(new { error = "No hay próximo partido sin jugar al que ligar la rueda de prensa." });
+        fixtureId = next.Value;
+    }
+
+    var coachName = req.CoachName ?? await conn.QuerySingleOrDefaultAsync<string>(
+        $"""
+        SELECT {Top(1)} co.Name FROM CoachCareer cc JOIN Coaches co ON cc.CoachId = co.CoachId
+        WHERE cc.TeamId = @rm ORDER BY cc.StartDate DESC
+        {Limit(1)}
+        """, new { rm = RealMadridId }) ?? "Entrenador";
+
+    if (req.Topics is null || req.Topics.Count == 0)
+        return Results.BadRequest(new { error = "Hace falta al menos un tema." });
+
+    if (conn.State != ConnectionState.Open) conn.Open();
+    using var tx = conn.BeginTransaction();
+
+    var confParams = new
+    {
+        fixtureId,
+        coachName,
+        source = string.IsNullOrWhiteSpace(req.Source) ? "claude" : req.Source,
+        sourceName = req.SourceName,
+        sourceUrl = req.SourceUrl,
+        headline = req.Headline,
+        publishedAtUtc = req.PublishedAtUtc,
+        fetchedAtUtc = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss"),
+    };
+
+    int confId = isSqlite
+        ? await conn.QuerySingleAsync<int>(
+            """
+            INSERT INTO PressConferences (FixtureId, CoachName, Source, SourceName, SourceUrl, Headline, PublishedAtUtc, FetchedAtUtc)
+            VALUES (@fixtureId, @coachName, @source, @sourceName, @sourceUrl, @headline, @publishedAtUtc, @fetchedAtUtc);
+            SELECT last_insert_rowid();
+            """, confParams, tx)
+        : await conn.QuerySingleAsync<int>(
+            """
+            INSERT INTO PressConferences (FixtureId, CoachName, Source, SourceName, SourceUrl, Headline, PublishedAtUtc, FetchedAtUtc)
+            OUTPUT INSERTED.PressConferenceId
+            VALUES (@fixtureId, @coachName, @source, @sourceName, @sourceUrl, @headline, @publishedAtUtc, @fetchedAtUtc)
+            """, confParams, tx);
+
+    int order = 0;
+    foreach (var t in req.Topics)
+    {
+        await conn.ExecuteAsync(
+            """
+            INSERT INTO PressTopics (PressConferenceId, Topic, Quote, Angle, Selected, SortOrder)
+            VALUES (@confId, @topic, @quote, @angle, @selected, @sortOrder)
+            """,
+            new { confId, topic = t.Topic, quote = t.Quote, angle = t.Angle, selected = t.Selected, sortOrder = order++ }, tx);
+    }
+
+    tx.Commit();
+    return Results.Ok(new { pressConferenceId = confId, fixtureId, topics = req.Topics.Count });
+});
+
+// Borrar una búsqueda que no sirvió, sin tener que tocar la base a mano.
+app.MapDelete("/api/press/conference/{id:int}", async (Func<IDbConnection> factory, int id) =>
+{
+    using var conn = factory();
+    if (conn.State != ConnectionState.Open) conn.Open();
+    using var tx = conn.BeginTransaction();
+    await conn.ExecuteAsync("DELETE FROM PressTopics WHERE PressConferenceId=@id", new { id }, tx);
+    var affected = await conn.ExecuteAsync("DELETE FROM PressConferences WHERE PressConferenceId=@id", new { id }, tx);
+    tx.Commit();
+    return affected == 0 ? Results.NotFound() : Results.Ok(new { ok = true });
+});
+
 app.MapGet("/api/matches/{fixtureId:int}/detail", async (Func<IDbConnection> factory, int fixtureId) =>
 {
     using var conn = factory();
@@ -1443,36 +1739,46 @@ app.MapGet("/api/media/history", async (Func<IDbConnection> factory) =>
 app.MapGet("/api/admin/db-provider", () => Results.Ok(new { provider = isSqlite ? "sqlite" : "sqlserver" }));
 
 var refreshState = new RefreshState();
+var presserState = new RefreshState();
 
-// Corre el Python portátil (bundled en el instalable) contra el mismo madrid.db
-// que ya usa la API -- solo tiene sentido en la app instalada (SQLite), donde
-// el usuario controla su propia API key en scripts\.env.
-app.MapPost("/api/admin/refresh-data", () =>
+// Corre uno de los scripts Python portátiles (bundled en el instalable) contra
+// el mismo madrid.db que ya usa la API -- solo tiene sentido en la app
+// instalada (SQLite), donde el usuario controla su propia API key en
+// scripts\.env. Compartido por "Actualizar datos" y "Traer rueda de prensa".
+IResult StartPythonScript(string scriptName, RefreshState state)
 {
     if (!isSqlite) return Results.BadRequest(new { error = "Solo disponible en la app instalada (SQLite)." });
 
-    lock (refreshState)
+    lock (state)
     {
-        if (refreshState.Running) return Results.Conflict(new { error = "Ya hay una actualización en curso." });
-        refreshState.Running = true;
-        refreshState.Finished = false;
-        refreshState.ExitCode = null;
-        refreshState.Log.Clear();
+        if (state.Running) return Results.Conflict(new { error = "Ya hay un proceso en curso." });
+        state.Running = true;
+        state.Finished = false;
+        state.ExitCode = null;
+        state.Log.Clear();
     }
 
+    // En la app instalada, Python y los scripts van junto al .exe. En desarrollo
+    // no existe esa carpeta, así que PYTHON_EXE y SCRIPTS_DIR permiten apuntar al
+    // intérprete y a ml-service/data sin tener que instalar la app.
     var appRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, ".."));
-    var pythonExe = Path.Combine(appRoot, "runtime", "python", "python.exe");
-    var scriptPath = Path.Combine(appRoot, "scripts", "refresh_current.py");
-    var envPath = Path.Combine(appRoot, "scripts", ".env");
+    var pythonExe = pythonExeOverride ?? Path.Combine(appRoot, "runtime", "python", "python.exe");
+    var scriptsDir = scriptsDirOverride ?? Path.Combine(appRoot, "scripts");
+    var scriptPath = Path.Combine(scriptsDir, scriptName);
+    // El .env vive junto a los scripts, así que en desarrollo tiene que seguir a
+    // SCRIPTS_DIR igual que el script -- si no, el chequeo de la API key buscaría
+    // en la carpeta del instalable, que en desarrollo no existe.
+    var envPath = Path.Combine(scriptsDir, ".env");
 
     if (!File.Exists(pythonExe) || !File.Exists(scriptPath))
     {
-        lock (refreshState)
+        lock (state)
         {
-            refreshState.Running = false;
-            refreshState.Finished = true;
-            refreshState.ExitCode = -1;
-            refreshState.Log.Add("No se encontró el Python portátil o el script -- ¿está instalado desde el instalador oficial?");
+            state.Running = false;
+            state.Finished = true;
+            state.ExitCode = -1;
+            state.Log.Add($"No se encontró el Python ({pythonExe}) o el script ({scriptPath}).");
+            state.Log.Add("En la app instalada esto significa que falta el instalador oficial. En desarrollo, arranca la API con PYTHON_EXE y SCRIPTS_DIR apuntando a tu intérprete y a ml-service/data, o corre el script a mano.");
         }
         return Results.Ok(new { started = true });
     }
@@ -1508,15 +1814,15 @@ app.MapPost("/api/admin/refresh-data", () =>
     psi.EnvironmentVariables["PYTHONUTF8"] = "1";
 
     var proc = new System.Diagnostics.Process { StartInfo = psi, EnableRaisingEvents = true };
-    proc.OutputDataReceived += (_, e) => { if (e.Data != null) lock (refreshState) refreshState.Log.Add(e.Data); };
-    proc.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (refreshState) refreshState.Log.Add("! " + e.Data); };
+    proc.OutputDataReceived += (_, e) => { if (e.Data != null) lock (state) state.Log.Add(e.Data); };
+    proc.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (state) state.Log.Add("! " + e.Data); };
     proc.Exited += (_, _) =>
     {
-        lock (refreshState)
+        lock (state)
         {
-            refreshState.Running = false;
-            refreshState.Finished = true;
-            refreshState.ExitCode = proc.ExitCode;
+            state.Running = false;
+            state.Finished = true;
+            state.ExitCode = proc.ExitCode;
         }
         proc.Dispose();
     };
@@ -1525,15 +1831,61 @@ app.MapPost("/api/admin/refresh-data", () =>
     proc.BeginErrorReadLine();
 
     return Results.Ok(new { started = true });
+}
+
+static IResult ScriptStatus(RefreshState state)
+{
+    lock (state)
+    {
+        return Results.Ok(new { running = state.Running, finished = state.Finished, exitCode = state.ExitCode, log = state.Log.ToArray() });
+    }
+}
+
+app.MapPost("/api/admin/refresh-data", () => StartPythonScript("refresh_current.py", refreshState));
+
+app.MapGet("/api/admin/refresh-status", () => ScriptStatus(refreshState));
+
+// Sale a buscar la rueda de prensa previa (sala de prensa oficial del club
+// primero, buscadores después) y guarda las citas textuales con su medio y su
+// link, sin resumir ni interpretar. Corre dentro de la API, no como script de
+// Python: no necesita cuota de API-Football ni credenciales, así que funciona
+// igual en desarrollo y en la app instalada sin depender de un intérprete.
+app.MapPost("/api/admin/fetch-presser", (Func<IDbConnection> factory) =>
+{
+    lock (presserState)
+    {
+        if (presserState.Running) return Results.Conflict(new { error = "Ya hay una búsqueda en curso." });
+        presserState.Running = true;
+        presserState.Finished = false;
+        presserState.ExitCode = null;
+        presserState.Log.Clear();
+    }
+
+    _ = Task.Run(async () =>
+    {
+        void Log(string msg) { lock (presserState) presserState.Log.Add(msg); }
+        int exitCode = 0;
+        try
+        {
+            await PressFetcher.RunAsync(factory, isSqlite, RealMadridId, Log);
+        }
+        catch (Exception ex)
+        {
+            Log("! " + ex.Message);
+            exitCode = -1;
+        }
+        lock (presserState)
+        {
+            presserState.Running = false;
+            presserState.Finished = true;
+            presserState.ExitCode = exitCode;
+        }
+    });
+
+    return Results.Ok(new { started = true });
 });
 
-app.MapGet("/api/admin/refresh-status", () =>
-{
-    lock (refreshState)
-    {
-        return Results.Ok(new { running = refreshState.Running, finished = refreshState.Finished, exitCode = refreshState.ExitCode, log = refreshState.Log.ToArray() });
-    }
-});
+app.MapGet("/api/admin/fetch-presser-status", () => ScriptStatus(presserState));
 
 // Detecta si scripts\.env ya tiene una API key real (no la plantilla) sin necesitar
 // arrancar el Python portátil -- deja al frontend avisar de una vez en vez de que el
@@ -1593,6 +1945,11 @@ record LineupSlot(string SlotPosition, int PlayerId);
 record MediaLogRequest(string Kind, string FileName, int? FixtureId);
 record ApiKeyRequest(string ApiKey);
 record EpisodeMetricRequest(int ViewsCount);
+record PressTopicUpdate(int PressTopicId, string? Topic, string? Angle, bool Selected);
+record PressTopicInput(string? Topic, string? Quote, string? Angle, bool Selected);
+record PressManualRequest(
+    int? FixtureId, string? CoachName, string? Source, string? SourceName,
+    string? SourceUrl, string? Headline, string? PublishedAtUtc, List<PressTopicInput> Topics);
 
 class RefreshState
 {

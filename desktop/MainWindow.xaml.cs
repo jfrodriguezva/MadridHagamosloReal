@@ -46,6 +46,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         Loaded += MainWindow_Loaded;
         Closing += MainWindow_Closing;
+        SourceInitialized += MainWindow_SourceInitialized;
         TryLoadIcon();
     }
 
@@ -96,6 +97,55 @@ public partial class MainWindow : Window
         }
     }
 
+    // El XAML pide 1400x900, pero eso son DIPs: en una pantalla con escala de
+    // Windows la superficie útil es bastante menor (ej. 1536x864 al 125% deja
+    // 1229x653 DIPs). Con WindowStartupLocation="CenterScreen", una ventana más
+    // alta que la pantalla se centra dejando la barra de título POR ENCIMA del
+    // borde superior: la app queda sin botones de minimizar/maximizar/cerrar y
+    // sin nada de dónde arrastrarla. Por eso el tamaño se ajusta al área de
+    // trabajo real antes de mostrarla, ya con el DPI del monitor resuelto.
+    private void MainWindow_SourceInitialized(object? sender, EventArgs e)
+    {
+        var work = SystemParameters.WorkArea;
+        _arrancarMaximizada = Width > work.Width || Height > work.Height;
+        FitIntoWorkArea();
+    }
+
+    // Si ni el tamaño preferido entraba en la pantalla, conviene arrancar
+    // maximizada. OJO: no se puede hacer desde SourceInitialized -- cambiar el
+    // WindowState antes de que WebView2 cree su controlador lo hace fallar con
+    // COMException 0x8007139F ("el recurso no está en el estado correcto") y la
+    // app queda con la ventana en blanco. Se aplica en Loaded, ya con WebView2
+    // inicializado. Al restaurar, la ventana queda con el tamaño ya ajustado.
+    private bool _arrancarMaximizada;
+
+    // Encoge y recentra la ventana dentro del área de trabajo del monitor.
+    private void FitIntoWorkArea()
+    {
+        var work = SystemParameters.WorkArea;
+        Width = Math.Min(Width, work.Width);
+        Height = Math.Min(Height, work.Height);
+        Left = work.Left + (work.Width - Width) / 2;
+        Top = work.Top + (work.Height - Height) / 2;
+    }
+
+    // Rescate desde la bandeja: devuelve la ventana al área visible aunque haya
+    // quedado minimizada, detrás de todo, o fuera de pantalla (típico al
+    // desconectar un segundo monitor o al cambiar la escala de Windows).
+    private void RestoreWindow(WindowState target)
+    {
+        Show();
+        WindowState = WindowState.Normal;
+
+        var work = SystemParameters.WorkArea;
+        bool fueraDeVista = Left + Width < work.Left + 80 || Left > work.Right - 80
+                            || Top < work.Top - 1 || Top > work.Bottom - 40;
+        if (fueraDeVista) FitIntoWorkArea();
+
+        WindowState = target;
+        Activate();
+    }
+
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
         // WebView2 intenta por defecto crear su carpeta de datos junto al .exe
@@ -106,9 +156,30 @@ public partial class MainWindow : Window
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "MadridHagamosloReal", "WebView2");
         Directory.CreateDirectory(userDataFolder);
-        var environment = await CoreWebView2Environment.CreateAsync(userDataFolder: userDataFolder);
-        await Browser.EnsureCoreWebView2Async(environment);
+        // Sin este try/catch la excepción viaja sin capturar y mata el proceso
+        // antes de pintar nada: desde fuera es "hice clic y no pasó nada", y el
+        // motivo solo aparece en el Visor de eventos de Windows. Los dos casos
+        // reales vistos son ambos COMException 0x8007139F: la sesión de Windows
+        // bloqueada (WebView2 necesita un escritorio componiendo para crear el
+        // controlador) y una segunda instancia sobre la misma carpeta de datos.
+        try
+        {
+            var environment = await CoreWebView2Environment.CreateAsync(userDataFolder: userDataFolder);
+            await Browser.EnsureCoreWebView2Async(environment);
+        }
+        catch (Exception ex)
+        {
+            bool estadoInvalido = ex is System.Runtime.InteropServices.COMException com
+                && com.HResult == unchecked((int)0x8007139F);
+            StatusText.Text = estadoInvalido
+                ? "No se pudo iniciar WebView2. Suele ser la pantalla bloqueada o la app ya abierta: desbloquea el equipo o cierra la otra ventana y vuelve a intentar."
+                : $"No se pudo iniciar WebView2: {ex.Message}";
+            return;
+        }
         Browser.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
+        Browser.CoreWebView2.PermissionRequested += OnPermissionRequested;
+
+        if (_arrancarMaximizada) WindowState = WindowState.Maximized;
 
         BackupDatabase();
 
@@ -145,6 +216,24 @@ public partial class MainWindow : Window
         {
             try { _trayIcon.Icon = new System.Drawing.Icon(iconPath); } catch { }
         }
+
+        // Control de ventana desde la bandeja. Además de ser cómodo, es la vía
+        // de rescate cuando la ventana queda inalcanzable (fuera de pantalla,
+        // detrás de otra app, o minimizada sin botón visible).
+        var menu = new System.Windows.Forms.ContextMenuStrip();
+        menu.Items.Add("Mostrar / Restaurar", null, (_, _) => RestoreWindow(WindowState.Normal));
+        menu.Items.Add("Maximizar", null, (_, _) => RestoreWindow(WindowState.Maximized));
+        menu.Items.Add("Minimizar", null, (_, _) => WindowState = WindowState.Minimized);
+        menu.Items.Add("Centrar en pantalla", null, (_, _) =>
+        {
+            WindowState = WindowState.Normal;
+            FitIntoWorkArea();
+            Activate();
+        });
+        menu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
+        menu.Items.Add("Salir", null, (_, _) => Close());
+        _trayIcon.ContextMenuStrip = menu;
+        _trayIcon.DoubleClick += (_, _) => RestoreWindow(WindowState.Normal);
 
         _matchCheckTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(20) };
         _matchCheckTimer.Tick += async (_, _) => await CheckNextMatchForNotification();
@@ -199,8 +288,51 @@ public partial class MainWindow : Window
         return $"https://{host}/{Uri.EscapeDataString(System.IO.Path.GetFileName(filePath))}";
     }
 
+    // El grabador del podcast (Podcast -> GRABAR LOCAL) pide el micrófono desde
+    // la propia página del portal. Sin este handler WebView2 decide solo, y en
+    // una app de escritorio ese diálogo aparece sin contexto o directamente se
+    // deniega. El usuario ya expresó su intención al pulsar GRABAR, así que se
+    // concede -- pero únicamente el micrófono y únicamente al portal local
+    // (localhost). Cualquier otro permiso u origen sigue el camino por defecto.
+    // La grabación en sí es local: se escribe un .webm en el equipo y no sale
+    // nada a la red.
+    private void OnPermissionRequested(object? sender, CoreWebView2PermissionRequestedEventArgs e)
+    {
+        if (e.PermissionKind == CoreWebView2PermissionKind.Microphone
+            && Uri.TryCreate(e.Uri, UriKind.Absolute, out var origin)
+            && origin.IsLoopback)
+        {
+            e.State = CoreWebView2PermissionState.Allow;
+            e.Handled = true;
+        }
+    }
+
     // Puente nativo WPF <-> web: la página llama window.chrome.webview.postMessage({type:"pickVideoFile"})
     // y aquí respondemos con la ruta elegida via un selector de archivos nativo de Windows.
+    // Control flotante de grabación. Vive como ventana nativa always-on-top
+    // porque tiene que seguir visible y clicable cuando el usuario se va a otra
+    // aplicación a grabar -- eso una página web no lo puede hacer. La página
+    // sigue siendo la dueña del MediaRecorder: aquí solo se muestra el estado y
+    // se le reenvían los botones.
+    private RecordingOverlay? _recordingOverlay;
+
+    private void ShowRecordingOverlay()
+    {
+        if (_recordingOverlay is null)
+        {
+            _recordingOverlay = new RecordingOverlay { Owner = null };
+            _recordingOverlay.CommandIssued += command =>
+                Browser.CoreWebView2?.PostWebMessageAsJson(
+                    System.Text.Json.JsonSerializer.Serialize(new { type = "recordingCommand", command }));
+        }
+        _recordingOverlay.Show();
+    }
+
+    private void HideRecordingOverlay()
+    {
+        _recordingOverlay?.Hide();
+    }
+
     private void OnWebMessageReceived(object? sender, Microsoft.Web.WebView2.Core.CoreWebView2WebMessageReceivedEventArgs e)
     {
         string json;
@@ -209,6 +341,25 @@ public partial class MainWindow : Window
         using var doc = System.Text.Json.JsonDocument.Parse(json);
         if (!doc.RootElement.TryGetProperty("type", out var typeEl)) return;
         var type = typeEl.GetString();
+
+        if (type == "recordingStarted")
+        {
+            ShowRecordingOverlay();
+            return;
+        }
+        else if (type == "recordingState")
+        {
+            int seconds = doc.RootElement.TryGetProperty("seconds", out var s) ? s.GetInt32() : 0;
+            bool paused = doc.RootElement.TryGetProperty("paused", out var p) && p.GetBoolean();
+            double level = doc.RootElement.TryGetProperty("micLevel", out var l) ? l.GetDouble() : 0;
+            _recordingOverlay?.UpdateState(seconds, paused, level);
+            return;
+        }
+        else if (type == "recordingStopped")
+        {
+            HideRecordingOverlay();
+            return;
+        }
 
         if (type == "pickVideoFile")
         {
@@ -335,7 +486,12 @@ public partial class MainWindow : Window
         TryKill(_webProcess);
         TryKill(_apiProcess);
         _matchCheckTimer?.Stop();
+        // la píldora es una ventana aparte: sin cerrarla, la app quedaría viva
+        // en segundo plano tras cerrar la ventana principal
+        _recordingOverlay?.Close();
+        _recordingOverlay = null;
         if (_trayIcon != null) _trayIcon.Visible = false;
+        _trayIcon?.ContextMenuStrip?.Dispose();
         _trayIcon?.Dispose();
     }
 

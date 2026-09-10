@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import NavBar from "../components/NavBar";
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5080";
+import { API } from "../lib/api";
 
 type MatchPlayer = { playerId: number; playerName: string; posCode: string; isStarter: boolean; rating: number | null; review: string | null };
 type LastMatch = { fixtureId: number; kickoffUtc: string; season: number; homeTeam: string; homeTeamId: number; awayTeam: string; awayTeamId: number; homeGoals: number; awayGoals: number };

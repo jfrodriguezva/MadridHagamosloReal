@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5080";
+import { API } from "../lib/api";
 
 type Corner = "br" | "bl" | "tr" | "tl";
 type TextOverlay = { id: string; keyword: string; color: string; startSec: number; endSec: number };

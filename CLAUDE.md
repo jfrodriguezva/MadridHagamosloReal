@@ -75,6 +75,49 @@ sin `.DisableAntiforgery()` en el endpoint, truena con
 `InvalidOperationException` en la primera request real (ver
 `/api/media/transcribe` en `api/Program.cs`). Ya se resolvió una vez, no
 hay que redescubrirlo si se agrega otro endpoint de subida de archivos.
+**Rueda de prensa previa (Podcast → Contenido)**: API-Football no expone
+ruedas de prensa. Los temas viven en `PressConferences`/`PressTopics` ligados
+al próximo fixture y entran por cuatro vías, distinguidas por `Source`:
+`oficial` (la sala de prensa de realmadrid.com, transcripción de primera
+mano), `buscador` (notas de medios vía el RSS de noticias de Bing), `claude`
+(yo investigo la rueda cuando el usuario me lo pide y la escribo por
+`POST /api/press/manual`) y `manual` (el usuario la teclea viendo la rueda).
+Las dos primeras las trae `api/PressFetcher.cs`, que extrae las **citas
+entrecomilladas** por estructura —nunca por "entender" el texto— y guarda la
+cita literal con medio, titular y link. La app **nunca titula el tema ni
+decide cuál es "el más relevante"**: eso lo hace el usuario marcando temas,
+igual que la regla del editor de imágenes. El guion de la previa cruza los
+temas marcados con la predicción del modelo.
+
+Va en C# dentro de la API, no como script de Python en `ml-service/data/`,
+a propósito: no consume cuota de API-Football ni credenciales, así que el
+botón funciona igual en desarrollo y en la app instalada sin depender de que
+haya un intérprete de Python en la máquina (la regla de "todo lo de
+API-Football pasa por scripts idempotentes de Python" sigue vigente para
+fixtures, alineaciones, momios y plantilla — esto no es API-Football).
+
+**Grabación local (Podcast → Grabar local)**: dos modos, por una razón de
+producto — al grabar la pizarra **no debe salir el resto de la app**.
+- Modo `app`: `getDisplayMedia({preferCurrentTab:true})` + **Region Capture**
+  (`CropTarget.fromElement` + `track.cropTo`) recortando al `<iframe>` de la
+  sección. El recorte es a nivel de compositor: la navbar, los controles del
+  grabador y el indicador flotante de "grabando" **no existen en el video**
+  aunque estén en pantalla. El track ya viene recortado, así que se graba
+  directo sin pasar por canvas. Si el navegador no soporta Region Capture se
+  avisa en pantalla — nunca se graba de más en silencio.
+- Modo `pantalla`: para otra ventana (la transmisión del partido, otra web).
+  `selfBrowserSurface:"exclude"` saca la propia pestaña del selector, y el
+  rectángulo que arrastra el usuario se dibuja en un `<canvas>` a 30fps
+  (Canvas 2D nativo, coherente con la regla de exportación). El recuadro se
+  puede mover en vivo sin cortar la toma.
+
+El control de grabación es un indicador flotante fijo estilo iPhone
+(`createPortal` a `document.body`): cronómetro, nivel de micrófono, pausa y
+detener, siempre alcanzable sin volver a la pestaña y fuera del recorte, así
+que no se graba a sí mismo. El micrófono se concede en
+`desktop/MainWindow.xaml.cs` (`PermissionRequested`), solo para el origen
+local y solo micrófono; la captura usa el selector por defecto de WebView2
+(no hace falta manejar `ScreenCaptureStarting`).
 
 **Selección de archivos en la app WPF**: WebView2 es Chromium — un
 `<input type="file">` normal ya abre el picker nativo de Windows sin código

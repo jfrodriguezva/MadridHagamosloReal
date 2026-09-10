@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import NavBar from "../components/NavBar";
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5080";
+import { API } from "../lib/api";
 
 type Player = {
   playerId: number;
