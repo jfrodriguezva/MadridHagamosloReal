@@ -1651,15 +1651,28 @@ app.MapGet("/api/lineups/last-played", async (Func<IDbConnection> factory) =>
 // dependencia pesada que todavía no se agregó al Python portátil del instalador.
 app.MapPost("/api/media/transcribe", async (IFormFile audio) =>
 {
-    var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    var venvPython = Path.Combine(repoRoot, "ml-service", ".venv", "Scripts", "python.exe");
-    var scriptPath = Path.Combine(repoRoot, "ml-service", "data", "transcribe.py");
+    // Mismo criterio de resolución que StartPythonScript (PYTHON_EXE/SCRIPTS_DIR
+    // primero, luego el layout instalado), más un tercer nivel: el venv de
+    // ml-service en desarrollo, donde vive faster-whisper cuando no corriste el
+    // instalador. Así funciona en los tres contextos sin configurar nada a mano.
+    var appRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, ".."));
+    var installedPython = pythonExeOverride ?? Path.Combine(appRoot, "runtime", "python", "python.exe");
+    var installedScript = Path.Combine(scriptsDirOverride ?? Path.Combine(appRoot, "scripts"), "transcribe.py");
 
-    if (!File.Exists(venvPython) || !File.Exists(scriptPath))
+    var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+    var devPython = Path.Combine(repoRoot, "ml-service", ".venv", "Scripts", "python.exe");
+    var devScript = Path.Combine(repoRoot, "ml-service", "data", "transcribe.py");
+
+    var (pythonExe, scriptPath) = File.Exists(installedPython) && File.Exists(installedScript)
+        ? (installedPython, installedScript)
+        : (devPython, devScript);
+
+    if (!File.Exists(pythonExe) || !File.Exists(scriptPath))
     {
         return Results.Problem(
-            "Transcripción no disponible en este entorno -- falta ml-service/.venv o transcribe.py. " +
-            "Solo funciona corriendo la API en modo desarrollo por ahora.",
+            $"Transcripción no disponible en este entorno -- no se encontró Python ni el script " +
+            $"({pythonExe} / {scriptPath}). Instala desde el instalador oficial, o en desarrollo " +
+            $"crea ml-service/.venv con 'pip install -r requirements-transcribe.txt'.",
             statusCode: 501);
     }
 
@@ -1673,7 +1686,7 @@ app.MapPost("/api/media/transcribe", async (IFormFile audio) =>
     {
         var psi = new System.Diagnostics.ProcessStartInfo
         {
-            FileName = venvPython,
+            FileName = pythonExe,
             UseShellExecute = false,
             RedirectStandardOutput = true,
             RedirectStandardError = true,

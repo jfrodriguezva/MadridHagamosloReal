@@ -46,6 +46,7 @@ Source: "runtime\node.exe"; DestDir: "{app}\runtime"; Flags: ignoreversion
 Source: "runtime\python\*"; DestDir: "{app}\runtime\python"; Flags: recursesubdirs ignoreversion
 Source: "..\ml-service\data\db_sqlite.py"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "..\ml-service\data\refresh_current.py"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "..\ml-service\data\transcribe.py"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "scripts\.env.example"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "install-service.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "uninstall-service.ps1"; DestDir: "{app}"; Flags: ignoreversion

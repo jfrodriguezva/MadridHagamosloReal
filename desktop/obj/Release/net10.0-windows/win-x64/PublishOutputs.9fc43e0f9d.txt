@@ -1,0 +1,2 @@
+C:\jfrodriguezv\SourceCodeAnthropic\Personal\HastaFinal\desktop\bin\Release\net10.0-windows\win-x64\publish\Madrid.Desktop.pdb
+C:\jfrodriguezv\SourceCodeAnthropic\Personal\HastaFinal\desktop\bin\Release\net10.0-windows\win-x64\publish\Madrid.Desktop.exe

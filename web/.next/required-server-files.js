@@ -106,7 +106,7 @@ self.__SERVER_FILES_MANIFEST={
         "transform": "lodash/{{member}}"
       }
     },
-    "outputFileTracingRoot": "C:\\jfrodriguezv\\SourceCodeAnthropic\\Hagamoslo\\web",
+    "outputFileTracingRoot": "C:\\jfrodriguezv\\SourceCodeAnthropic\\Personal\\HastaFinal\\web",
     "enablePrerenderSourceMaps": true,
     "cacheComponents": false,
     "cacheLife": {
@@ -321,13 +321,13 @@ self.__SERVER_FILES_MANIFEST={
     "htmlLimitedBots": "[\\w-]+-Google|Google-[\\w-]+|Chrome-Lighthouse|Slurp|DuckDuckBot|baiduspider|yandex|sogou|bitlybot|tumblr|vkShare|quora link preview|redditbot|ia_archiver|Bingbot|BingPreview|applebot|facebookexternalhit|facebookcatalog|Twitterbot|LinkedInBot|Slackbot|Discordbot|WhatsApp|SkypeUriPreview|Yeti|googleweblight",
     "bundlePagesRouterDependencies": false,
     "configFileName": "next.config.ts",
-    "repoRoot": "C:\\jfrodriguezv\\SourceCodeAnthropic\\Hagamoslo\\web",
+    "repoRoot": "C:\\jfrodriguezv\\SourceCodeAnthropic\\Personal\\HastaFinal\\web",
     "turbopack": {
-      "root": "C:\\jfrodriguezv\\SourceCodeAnthropic\\Hagamoslo\\web"
+      "root": "C:\\jfrodriguezv\\SourceCodeAnthropic\\Personal\\HastaFinal\\web"
     },
     "distDirRoot": ".next"
   },
-  "appDir": "C:\\jfrodriguezv\\SourceCodeAnthropic\\Hagamoslo\\web",
+  "appDir": "C:\\jfrodriguezv\\SourceCodeAnthropic\\Personal\\HastaFinal\\web",
   "relativeAppDir": "",
   "files": [
     ".next\\package.json",

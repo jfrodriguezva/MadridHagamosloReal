@@ -363,15 +363,25 @@ mismo patrón, 100% local, sin llamar a ningún servicio externo.
 (comprimido, no sube el video completo) y lo manda a `POST
 /api/media/transcribe`, que corre `ml-service/data/transcribe.py`
 (`faster-whisper`, 100% local, sin API key) y devuelve el texto para pegar
-en la descripción de YouTube. **Solo funciona en desarrollo por ahora** — la
-API busca el script contra `ml-service/.venv`, no contra el Python portátil
-del instalador. Para activarlo:
-```bash
-cd ml-service
-.venv/Scripts/python.exe -m pip install -r requirements-transcribe.txt
-```
-La primera transcripción descarga el modelo (~150MB, modelo "small") desde
-Hugging Face una sola vez; de ahí en adelante funciona sin internet.
+en la descripción de YouTube. Funciona en los dos entornos:
+
+- **App instalada** — `faster-whisper` ya viene en `installer/runtime/python/`
+  (agregado con `pip install faster-whisper==1.0.3` contra ese intérprete
+  portátil antes de compilar), y `transcribe.py` se copia a
+  `{app}\scripts\` vía `MadridHagamosloReal.iss`. No hace falta ningún paso
+  extra del usuario.
+- **Desarrollo** — usa `ml-service/.venv`, que necesita el paquete a mano:
+  ```bash
+  cd ml-service
+  .venv/Scripts/python.exe -m pip install -r requirements-transcribe.txt
+  ```
+
+El endpoint resuelve el intérprete con el mismo criterio que `StartPythonScript`
+(`PYTHON_EXE`/`SCRIPTS_DIR` → layout instalado → venv de `ml-service` como
+último recurso), así que no hace falta configurar nada para que funcione en
+cualquiera de los tres casos. La primera transcripción descarga el modelo
+(~150MB, modelo "small") desde Hugging Face una sola vez; de ahí en
+adelante funciona sin internet. Esto agrega ~200-300MB al instalador.
 
 ---
 

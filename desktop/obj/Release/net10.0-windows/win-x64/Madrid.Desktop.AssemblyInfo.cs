@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Madrid.Desktop")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+ce1b3a85e8e39f0991cada9018fbaf0a56a1b3d7")]
 [assembly: System.Reflection.AssemblyProductAttribute("Madrid.Desktop")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Madrid.Desktop")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

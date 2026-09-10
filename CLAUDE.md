@@ -62,12 +62,15 @@ lo dice explícitamente en vez de omitirlo en silencio.
 
 **Transcripción de voz-a-texto**: igual que el editor de imagen, **sin IA
 externa de pago** — usa `faster-whisper` corriendo 100% local
-(`ml-service/data/transcribe.py`), no la API de OpenAI. Hoy es **solo para
-desarrollo** (usa `ml-service/.venv`, el usuario instala `faster-whisper` a
-mano con `requirements-transcribe.txt` porque es una dependencia pesada) —
-todavía no está en el Python portátil del instalador. Si se pide llevarlo a
-la app instalada, hay que evaluar el tamaño que le suma al instalador antes
-de hacerlo, no asumir que es gratis en espacio.
+(`ml-service/data/transcribe.py`). **Ya está en el Python portátil del
+instalador** (decisión explícita del usuario, confirmada: ~200-300MB extra
+son aceptables) — se instaló con `pip install faster-whisper==1.0.3` contra
+`installer/runtime/python/` antes de compilar, y `transcribe.py` se copia a
+`{app}\scripts\` vía el `.iss`. Si alguna vez se actualiza ese runtime
+portátil (nueva versión de Python, etc.), hay que reinstalar `faster-whisper`
+ahí también — no viene solo. En desarrollo sigue siendo un paso aparte
+(`ml-service/.venv` + `requirements-transcribe.txt`) porque es pesado y no
+lo necesita el resto de `ml-service/`.
 
 **Gotcha de .NET 10**: cualquier endpoint Minimal API que reciba `IFormFile`
 exige metadata de antiforgery aunque nunca se llame a `AddAntiforgery()` —
