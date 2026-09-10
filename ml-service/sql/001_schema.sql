@@ -41,9 +41,13 @@ CREATE TABLE dbo.Fixtures (
     IngestedAtUtc DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
 );
 GO
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Fixtures_League_Season' AND object_id = OBJECT_ID('dbo.Fixtures'))
 CREATE INDEX IX_Fixtures_League_Season ON dbo.Fixtures(LeagueId, Season);
 GO
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Fixtures_HomeTeam' AND object_id = OBJECT_ID('dbo.Fixtures'))
 CREATE INDEX IX_Fixtures_HomeTeam ON dbo.Fixtures(HomeTeamId, KickoffUtc);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Fixtures_AwayTeam' AND object_id = OBJECT_ID('dbo.Fixtures'))
 CREATE INDEX IX_Fixtures_AwayTeam ON dbo.Fixtures(AwayTeamId, KickoffUtc);
 GO
 
@@ -95,5 +99,6 @@ CREATE TABLE dbo.Predictions (
     WasCorrect BIT NULL
 );
 GO
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Predictions_Fixture' AND object_id = OBJECT_ID('dbo.Predictions'))
 CREATE INDEX IX_Predictions_Fixture ON dbo.Predictions(FixtureId);
 GO

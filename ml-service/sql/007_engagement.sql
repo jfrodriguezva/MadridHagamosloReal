@@ -30,6 +30,7 @@ CREATE TABLE dbo.OddsSnapshots (
     FetchedAtUtc DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
 );
 GO
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_OddsSnapshots_Fixture' AND object_id = OBJECT_ID('dbo.OddsSnapshots'))
 CREATE INDEX IX_OddsSnapshots_Fixture ON dbo.OddsSnapshots(FixtureId);
 GO
 

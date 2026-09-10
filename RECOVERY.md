@@ -76,22 +76,30 @@ Requiere en el equipo nuevo:
 
 Si tienes un `.bak` de SQL Server, restáuralo como `MadridHagamosloReal`. Si
 no lo tienes (el caso más común al mover el proyecto a otro equipo — nos pasó
-en esta misma máquina), corre:
+en esta misma máquina), un solo comando deja SQL Server (o SQL Express) con
+el esquema **y** el histórico real, sin pasos manuales de por medio:
 
 ```powershell
 .\ml-service\sql\bootstrap-dev-db.ps1
+# instancia con nombre (típico en SQL Express): -Server ".\SQLEXPRESS"
+# sin autenticación de Windows: -User sa -Password "..."
+# solo el esquema, sin datos: -SchemaOnly
 ```
 
-Crea la base (si no existe) y aplica los `00N_*.sql` en orden — deja el
-esquema completo pero **vacío**, sin histórico. Usa autenticación de Windows
-por defecto (`-Server`/`-User`/`-Password` si necesitas otra cosa). Guarda la
-cadena de conexión real con `dotnet user-secrets set` desde `api/` (ver
-sección de arriba) — nunca la hardcodees en el código.
+Hace dos cosas en un solo paso:
+1. Crea la base (si no existe) y aplica los `00N_*.sql` en orden.
+2. A menos que pases `-SchemaOnly`, la llena automáticamente con el
+   histórico real desde `desktop/madrid.db` (mismo dataset que trae la app
+   instalada) usando `ml-service/data/seed_dev_db_from_sqlite.py` — el
+   Python ya viene en `ml-service/.venv` (committeado), no hace falta
+   `pip install` para este flujo. Es **seguro correrlo varias veces**: tanto
+   el esquema como los datos son idempotentes.
 
-Para tener **datos reales** sin correr el pipeline completo de `fetch_*.py`
-(que necesita tu propia API key y horas de backfill), la alternativa rápida
-es apuntar la API a `desktop/madrid.db` (SQLite, con todo el histórico ya
-cargado) en vez de a SQL Server:
+Después, guarda la cadena de conexión real con `dotnet user-secrets set`
+desde `api/` (ver sección de arriba) — nunca la hardcodees en el código.
+
+Alternativa si prefieres no tocar SQL Server para nada: apuntar la API
+directo a `desktop/madrid.db` con SQLite:
 
 ```bash
 cd api

@@ -67,6 +67,7 @@ CREATE TABLE dbo.MatchEvents2 (
     EventDetail NVARCHAR(60) NULL
 );
 GO
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_MatchEvents2_Fixture' AND object_id = OBJECT_ID('dbo.MatchEvents2'))
 CREATE INDEX IX_MatchEvents2_Fixture ON dbo.MatchEvents2(FixtureId);
 GO
 
