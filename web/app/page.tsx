@@ -18,6 +18,8 @@ type NextMatch = {
   probDraw: number | null;
   probAway: number | null;
   recentForm?: ("W" | "D" | "L")[];
+  recentFormLeague?: ("W" | "D" | "L")[];
+  recentFormChampions?: ("W" | "D" | "L")[];
 };
 
 type CalendarMatch = {
@@ -179,28 +181,43 @@ export default async function DashboardPage() {
                     <span className="text-sm font-semibold">{next.awayTeam}</span>
                   </div>
                 </div>
-                {next.recentForm && next.recentForm.length > 0 && (
-                  <div className="flex items-center gap-2 mt-4 pt-3" style={{ borderTop: "1px solid rgba(255,255,255,.12)" }}>
-                    <span className="font-mono text-[10px] tracking-wider" style={{ color: "#c9c5df" }}>
-                      RACHA
-                    </span>
-                    <div className="flex gap-1">
-                      {next.recentForm.map((r, i) => (
-                        <span
-                          key={i}
-                          className="w-5 h-5 rounded-full flex items-center justify-center font-mono text-[10px] font-bold"
-                          style={{
-                            background: r === "W" ? "var(--good)" : r === "L" ? "var(--bad)" : "rgba(255,255,255,.25)",
-                            color: "#fff",
-                          }}
-                          title={r === "W" ? "Ganó" : r === "L" ? "Perdió" : "Empató"}
-                        >
-                          {r}
-                        </span>
+                {(() => {
+                  // Liga y Champions por separado -- un 3-0 a un rival de la parte baja de
+                  // tabla no dice lo mismo que un 3-0 en Champions, mezclarlos en una sola
+                  // racha engaña más de lo que ayuda. Si la API todavía no manda el desglose
+                  // (despliegue viejo), cae de vuelta a la racha combinada.
+                  const rachas = [
+                    { label: "LIGA", data: next.recentFormLeague ?? next.recentForm },
+                    { label: "UCL", data: next.recentFormChampions },
+                  ].filter((r) => r.data && r.data.length > 0);
+                  if (rachas.length === 0) return null;
+                  return (
+                    <div className="flex flex-col gap-1.5 mt-4 pt-3" style={{ borderTop: "1px solid rgba(255,255,255,.12)" }}>
+                      {rachas.map((r) => (
+                        <div key={r.label} className="flex items-center gap-2">
+                          <span className="font-mono text-[10px] tracking-wider w-9" style={{ color: "#c9c5df" }}>
+                            {r.label}
+                          </span>
+                          <div className="flex gap-1">
+                            {r.data!.map((v, i) => (
+                              <span
+                                key={i}
+                                className="w-5 h-5 rounded-full flex items-center justify-center font-mono text-[10px] font-bold"
+                                style={{
+                                  background: v === "W" ? "var(--good)" : v === "L" ? "var(--bad)" : "rgba(255,255,255,.25)",
+                                  color: "#fff",
+                                }}
+                                title={v === "W" ? "Ganó" : v === "L" ? "Perdió" : "Empató"}
+                              >
+                                {v}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
                       ))}
                     </div>
-                  </div>
-                )}
+                  );
+                })()}
               </>
             ) : (
               <p className="text-sm text-[#c9c5df]">No hay próximo partido programado en la base.</p>

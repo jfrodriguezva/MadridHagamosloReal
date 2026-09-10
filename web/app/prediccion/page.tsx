@@ -24,6 +24,8 @@ type FullPrediction = {
   btts: { probYes: number } | null;
   over25: { probYes: number } | null;
   recentForm?: ("W" | "D" | "L")[];
+  recentFormLeague?: ("W" | "D" | "L")[];
+  recentFormChampions?: ("W" | "D" | "L")[];
   shotsTrend?: {
     matches: number;
     avgShotsOnGoalFor: number;
@@ -203,25 +205,40 @@ export default async function PrediccionPage() {
 
             {((data.recentForm && data.recentForm.length > 0) || data.h2h) && (
               <div className="rounded-xl p-5 border grid grid-cols-2 gap-5" style={{ background: "var(--surface)", borderColor: "var(--line)" }}>
-                {data.recentForm && data.recentForm.length > 0 && (
-                  <div>
-                    <span className="font-mono text-[11px] uppercase tracking-wider" style={{ color: "var(--muted)" }}>
-                      Racha reciente
-                    </span>
-                    <div className="flex gap-1.5 mt-2">
-                      {data.recentForm.map((r, i) => (
-                        <span
-                          key={i}
-                          className="w-7 h-7 rounded-full flex items-center justify-center font-mono text-xs font-bold text-white"
-                          style={{ background: r === "W" ? "var(--good)" : r === "L" ? "var(--bad)" : "var(--muted)" }}
-                          title={r === "W" ? "Ganó" : r === "L" ? "Perdió" : "Empató"}
-                        >
-                          {r}
-                        </span>
+                {(() => {
+                  // Liga y Champions por separado -- mezclarlas en una sola racha combinada
+                  // engaña más de lo que ayuda (rivales de nivel muy distinto). Cae de vuelta
+                  // a la racha combinada si la API todavía no manda el desglose.
+                  const rachas = [
+                    { label: "Liga", data: data.recentFormLeague ?? data.recentForm },
+                    { label: "Champions", data: data.recentFormChampions },
+                  ].filter((r) => r.data && r.data.length > 0);
+                  if (rachas.length === 0) return null;
+                  return (
+                    <div className="flex flex-col gap-3">
+                      <span className="font-mono text-[11px] uppercase tracking-wider" style={{ color: "var(--muted)" }}>
+                        Racha reciente
+                      </span>
+                      {rachas.map((r) => (
+                        <div key={r.label}>
+                          <div className="text-[11px]" style={{ color: "var(--muted)" }}>{r.label}</div>
+                          <div className="flex gap-1.5 mt-1">
+                            {r.data!.map((v, i) => (
+                              <span
+                                key={i}
+                                className="w-7 h-7 rounded-full flex items-center justify-center font-mono text-xs font-bold text-white"
+                                style={{ background: v === "W" ? "var(--good)" : v === "L" ? "var(--bad)" : "var(--muted)" }}
+                                title={v === "W" ? "Ganó" : v === "L" ? "Perdió" : "Empató"}
+                              >
+                                {v}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
                       ))}
                     </div>
-                  </div>
-                )}
+                  );
+                })()}
                 {data.h2h && (
                   <div>
                     <span className="font-mono text-[11px] uppercase tracking-wider" style={{ color: "var(--muted)" }}>

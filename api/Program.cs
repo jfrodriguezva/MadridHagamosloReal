@@ -205,16 +205,22 @@ app.UseSerilogRequestLogging();
 // Racha de forma reciente (W/D/L) del Real Madrid, en orden cronológico (más viejo -> más
 // nuevo) para leerse como una línea de tiempo. Reutilizada por dashboard/next-match y por
 // predictions/next/full -- un solo lugar que sabe calcular "racha" en vez de duplicar el SQL.
-async Task<List<string>> RecentForm(IDbConnection conn, int count = 5)
+//
+// competitionType opcional: sin él, mezcla Liga y Champions en los mismos "últimos 5" --
+// que es justo lo que puede engañar más de lo que ayuda (un 3-0 a un rival de la parte baja
+// de LaLiga no dice lo mismo que un 3-0 en octavos de Champions). Con el filtro, cada
+// endpoint expone la racha de Liga y de Champions por separado en vez de una sola mezclada.
+async Task<List<string>> RecentForm(IDbConnection conn, int count = 5, string? competitionType = null)
 {
+    var compFilter = competitionType != null ? "AND CompetitionType = @comp" : "";
     var rows = await conn.QueryAsync<dynamic>(
         $"""
         SELECT {Top(count)} HomeTeamId AS homeTeamId, AwayTeamId AS awayTeamId, HomeGoals AS homeGoals, AwayGoals AS awayGoals
         FROM Fixtures
-        WHERE (HomeTeamId = @rm OR AwayTeamId = @rm) AND StatusShort = 'FT'
+        WHERE (HomeTeamId = @rm OR AwayTeamId = @rm) AND StatusShort = 'FT' {compFilter}
         ORDER BY KickoffUtc DESC
         {Limit(count)}
-        """, new { rm = RealMadridId });
+        """, new { rm = RealMadridId, comp = competitionType });
 
     string Outcome(dynamic r)
     {
@@ -269,9 +275,10 @@ app.MapGet("/api/dashboard/next-match", async (Func<IDbConnection> factory) =>
 
     if (match is null) return Results.NotFound();
 
-    var recentForm = await RecentForm(conn);
     var result = (IDictionary<string, object>)match!;
-    result["recentForm"] = recentForm;
+    result["recentForm"] = await RecentForm(conn);
+    result["recentFormLeague"] = await RecentForm(conn, competitionType: "LEAGUE");
+    result["recentFormChampions"] = await RecentForm(conn, competitionType: "UCL");
     return Results.Ok(result);
 });
 
@@ -412,6 +419,8 @@ app.MapGet("/api/predictions/next/full", async (Func<IDbConnection> factory) =>
         {Limit(5)}
         """, new { rm = RealMadridId, opp = opponentId });
     var recentForm = await RecentForm(conn);
+    var recentFormLeague = await RecentForm(conn, competitionType: "LEAGUE");
+    var recentFormChampions = await RecentForm(conn, competitionType: "UCL");
 
     // Tendencia de disparos (a favor/en contra) de los últimos 5 partidos con datos --
     // no es xG real (API-Football no lo trae en el plan usado, y no está en el esquema),
@@ -457,7 +466,7 @@ app.MapGet("/api/predictions/next/full", async (Func<IDbConnection> factory) =>
         };
     }
 
-    return Results.Ok(new { match, x12, btts, over25, recentForm, shotsTrend, h2h = new { summary = h2hSummary, recent = h2hRecent } });
+    return Results.Ok(new { match, x12, btts, over25, recentForm, recentFormLeague, recentFormChampions, shotsTrend, h2h = new { summary = h2hSummary, recent = h2hRecent } });
 });
 
 app.MapGet("/api/players", async (Func<IDbConnection> factory, string? position) =>
