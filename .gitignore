@@ -24,3 +24,9 @@ Thumbs.db
 api/**/logs/
 ml-service/.pytest_cache/
 ml-service/tests/__pycache__/
+
+# Caché del servidor de DESARROLLO de Next.js (turbopack incremental, manifests
+# de dev) -- a diferencia de web/.next/standalone (build de producción, sí
+# necesario para el instalador), esto se regenera solo al correr "npm run dev"
+# y no aporta nada a un clon nuevo. Llegó a pesar 134MB/300 archivos sin razón.
+web/.next/dev/

@@ -1,8 +1,0 @@
-{
-  "/calificaciones/page": "app/calificaciones/page.js",
-  "/jugadores/page": "app/jugadores/page.js",
-  "/page": "app/page.js",
-  "/podcast/page": "app/podcast/page.js",
-  "/prediccion/page": "app/prediccion/page.js",
-  "/tactica/page": "app/tactica/page.js"
-}
