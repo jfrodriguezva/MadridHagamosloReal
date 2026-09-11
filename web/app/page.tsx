@@ -22,6 +22,41 @@ type NextMatch = {
   recentFormChampions?: ("W" | "D" | "L")[];
 };
 
+type Postmortem = {
+  match: {
+    fixtureId: number;
+    kickoffUtc: string;
+    roundLabel: string;
+    competitionType: string;
+    homeGoals: number;
+    awayGoals: number;
+    homeTeam: string;
+    homeTeamId: number;
+    awayTeam: string;
+    awayTeamId: number;
+    leagueName: string;
+  } | null;
+  prediction: {
+    probHome: number;
+    probDraw: number;
+    probAway: number;
+    bestScoreHome: number | null;
+    bestScoreAway: number | null;
+    actualOutcome: "H" | "D" | "A" | null;
+    wasCorrect: boolean | null;
+  } | null;
+  valueBet: {
+    market: string;
+    recommendedSide: "H" | "D" | "A";
+    edgePct: number;
+    actualOutcome: "H" | "D" | "A" | null;
+    wasCorrect: number;
+  } | null;
+  mvp: { playerId: number; name: string; aiRating: number } | null;
+  worst: { playerId: number; name: string; aiRating: number } | null;
+  ratingsSummary: { ratedCount: number; avgUserVsAiDelta: number | null } | null;
+};
+
 type CalendarMatch = {
   fixtureId: number;
   kickoffUtc: string;
@@ -68,8 +103,21 @@ function rmProb(m: { probHome: number | null; probDraw: number | null; probAway:
   return isRMHome(m as any) ? m.probHome! : m.probAway!;
 }
 
+function outcomeLabel(outcome: "H" | "D" | "A" | null | undefined, match: { homeTeamId: number }) {
+  if (!outcome) return "—";
+  if (outcome === "D") return "Empate";
+  const rmWon = (outcome === "H") === isRMHome(match);
+  return rmWon ? "Ganó el Real Madrid" : "Ganó el rival";
+}
+
+function predictedOutcome(p: { probHome: number; probDraw: number; probAway: number }): "H" | "D" | "A" {
+  if (p.probHome >= p.probDraw && p.probHome >= p.probAway) return "H";
+  if (p.probAway >= p.probDraw) return "A";
+  return "D";
+}
+
 export default async function DashboardPage() {
-  const [next, calendar, accuracy] = await Promise.all([
+  const [next, calendar, accuracy, postmortem] = await Promise.all([
     getJson<NextMatch>("/api/dashboard/next-match"),
     getJson<{ past: CalendarMatch[]; future: CalendarMatch[] }>(
       "/api/dashboard/calendar?pastCount=6&futureCount=4"
@@ -80,6 +128,7 @@ export default async function DashboardPage() {
       favoriteBaseline: { total: number; correct: number };
       activeModel: { algorithm: string; version: string; valAccuracy: number | null; valLogLoss: number | null; valBrier: number | null } | null;
     }>("/api/dashboard/model-accuracy"),
+    getJson<Postmortem>("/api/matches/postmortem/last-match"),
   ]);
 
   const rival = next ? (isRMHome(next) ? next.awayTeam : next.homeTeam) : null;
@@ -300,6 +349,115 @@ export default async function DashboardPage() {
             subColor="var(--muted)"
           />
         </div>
+
+        {postmortem?.match && (
+          <div className="rounded-xl p-5 border" style={{ background: "var(--surface)", borderColor: "var(--line)" }}>
+            <div className="flex justify-between items-baseline mb-3">
+              <span className="font-mono text-[11px] uppercase tracking-wider" style={{ color: "var(--muted)" }}>
+                Postmortem · último partido
+              </span>
+              <span className="text-xs" style={{ color: "var(--muted)" }}>
+                {new Date(postmortem.match.kickoffUtc).toLocaleDateString("es-ES", { day: "2-digit", month: "long" })}
+                {" · "}
+                {postmortem.match.roundLabel}
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="font-display text-lg font-bold">
+                {postmortem.match.homeTeam} {postmortem.match.homeGoals}–{postmortem.match.awayGoals} {postmortem.match.awayTeam}
+              </div>
+              {postmortem.prediction?.wasCorrect != null && (
+                <span
+                  className="font-mono text-[11px] px-2 py-0.5 rounded-full font-bold"
+                  style={{
+                    background: postmortem.prediction.wasCorrect ? "var(--gold-soft)" : "rgba(200,50,50,.12)",
+                    color: postmortem.prediction.wasCorrect ? "var(--gold)" : "var(--bad)",
+                  }}
+                >
+                  {postmortem.prediction.wasCorrect ? "✓ predicción acertada" : "✗ predicción fallada"}
+                </span>
+              )}
+            </div>
+
+            {postmortem.prediction && (
+              <div className="mt-2 text-xs leading-relaxed" style={{ color: "var(--muted)" }}>
+                Predijimos:{" "}
+                <span style={{ color: "var(--text)" }}>
+                  {outcomeLabel(predictedOutcome(postmortem.prediction), postmortem.match)}
+                </span>{" "}
+                ({Math.round(
+                  Math.max(postmortem.prediction.probHome, postmortem.prediction.probDraw, postmortem.prediction.probAway) * 100
+                )}%)
+                {postmortem.prediction.bestScoreHome != null && (
+                  <>
+                    {" "}· marcador más probable {postmortem.prediction.bestScoreHome}-{postmortem.prediction.bestScoreAway}
+                  </>
+                )}
+                {" · "}Resultado real:{" "}
+                <span style={{ color: "var(--text)" }}>{outcomeLabel(postmortem.prediction.actualOutcome, postmortem.match)}</span>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+              <div className="rounded-lg p-3" style={{ background: "var(--surface-2)" }}>
+                <span className="font-mono text-[10px] uppercase tracking-wider" style={{ color: "var(--muted)" }}>
+                  Value bet
+                </span>
+                {postmortem.valueBet ? (
+                  <div className="mt-1 text-sm">
+                    <span style={{ color: postmortem.valueBet.wasCorrect ? "var(--good)" : "var(--bad)" }}>
+                      {postmortem.valueBet.wasCorrect ? "✓ acertó" : "✗ falló"}
+                    </span>{" "}
+                    — {postmortem.valueBet.market} (edge +{postmortem.valueBet.edgePct}%)
+                  </div>
+                ) : (
+                  <div className="mt-1 text-sm" style={{ color: "var(--muted)" }}>
+                    No se detectó value bet en este partido.
+                  </div>
+                )}
+              </div>
+
+              <div className="rounded-lg p-3" style={{ background: "var(--surface-2)" }}>
+                <span className="font-mono text-[10px] uppercase tracking-wider" style={{ color: "var(--muted)" }}>
+                  MVP (IA)
+                </span>
+                {postmortem.mvp ? (
+                  <div className="mt-1 text-sm">
+                    <span className="font-semibold">{postmortem.mvp.name}</span>{" "}
+                    <span className="font-mono" style={{ color: "var(--gold)" }}>
+                      {Number(postmortem.mvp.aiRating).toFixed(1)}
+                    </span>
+                    {postmortem.worst && postmortem.worst.playerId !== postmortem.mvp.playerId && (
+                      <span style={{ color: "var(--muted)" }}>
+                        {" "}
+                        · peor: {postmortem.worst.name} ({Number(postmortem.worst.aiRating).toFixed(1)})
+                      </span>
+                    )}
+                  </div>
+                ) : (
+                  <div className="mt-1 text-sm" style={{ color: "var(--muted)" }}>
+                    Sin calificaciones de la IA todavía.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {postmortem.ratingsSummary && postmortem.ratingsSummary.ratedCount > 0 && (
+              <div className="mt-3 text-xs" style={{ color: "var(--muted)" }}>
+                Calificaste {postmortem.ratingsSummary.ratedCount} jugador{postmortem.ratingsSummary.ratedCount === 1 ? "" : "es"} de este
+                partido
+                {postmortem.ratingsSummary.avgUserVsAiDelta != null && (
+                  <>
+                    {" "}
+                    · en promedio {postmortem.ratingsSummary.avgUserVsAiDelta >= 0 ? "más generoso" : "más duro"} que la IA por{" "}
+                    <span className="font-mono">{Math.abs(postmortem.ratingsSummary.avgUserVsAiDelta).toFixed(1)} pts</span>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         <CalendarStrip past={calendar?.past ?? []} future={calendar?.future ?? []} />
       </div>

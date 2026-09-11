@@ -1608,6 +1608,88 @@ app.MapGet("/api/matches/{fixtureId:int}/mvp", async (Func<IDbConnection> factor
     return Results.Ok(new { mvp = list.FirstOrDefault(), worst = list.LastOrDefault() });
 });
 
+// Postmortem del último partido: junta en una sola llamada lo que hoy vive repartido en
+// cuatro endpoints (predicción, value bet, MVP, calificaciones) -- responde de un vistazo
+// "¿acertamos? ¿el value bet valió la pena? ¿quién fue el MVP y qué tan de acuerdo estuvo
+// el usuario con la IA?" sin tener que cruzar mentalmente cuatro pantallas distintas.
+app.MapGet("/api/matches/postmortem/last-match", async (Func<IDbConnection> factory) =>
+{
+    using var conn = factory();
+    var match = await conn.QuerySingleOrDefaultAsync<dynamic>(
+        $"""
+        SELECT {Top(1)} f.FixtureId AS fixtureId, f.KickoffUtc AS kickoffUtc, f.RoundLabel AS roundLabel,
+               f.CompetitionType AS competitionType, f.HomeGoals AS homeGoals, f.AwayGoals AS awayGoals,
+               ht.Name AS homeTeam, ht.TeamId AS homeTeamId, at.Name AS awayTeam, at.TeamId AS awayTeamId,
+               l.Name AS leagueName
+        FROM Fixtures f
+        JOIN Teams ht ON f.HomeTeamId = ht.TeamId
+        JOIN Teams at ON f.AwayTeamId = at.TeamId
+        JOIN Leagues l ON f.LeagueId = l.LeagueId
+        WHERE (f.HomeTeamId=@rm OR f.AwayTeamId=@rm) AND f.StatusShort='FT'
+        ORDER BY f.KickoffUtc DESC
+        {Limit(1)}
+        """, new { rm = RealMadridId });
+    if (match is null) return Results.Ok(new { match = (object?)null });
+
+    int fixtureId = (int)match.fixtureId;
+
+    var prediction = await conn.QuerySingleOrDefaultAsync<dynamic>(
+        """
+        SELECT ProbHome AS probHome, ProbDraw AS probDraw, ProbAway AS probAway,
+               BestScoreHome AS bestScoreHome, BestScoreAway AS bestScoreAway, BestScoreProb AS bestScoreProb,
+               ActualOutcome AS actualOutcome, WasCorrect AS wasCorrect
+        FROM Predictions WHERE FixtureId=@id AND Market='1X2'
+        """, new { id = fixtureId });
+
+    var valueBet = await conn.QuerySingleOrDefaultAsync<dynamic>(
+        """
+        SELECT v.Market AS market, v.RecommendedSide AS recommendedSide, v.ModelProb AS modelProb,
+               v.MarketProb AS marketProb, v.EdgePct AS edgePct, p.ActualOutcome AS actualOutcome,
+               CASE WHEN v.RecommendedSide = p.ActualOutcome THEN 1 ELSE 0 END AS wasCorrect
+        FROM ValueBetLog v
+        JOIN Predictions p ON p.FixtureId = v.FixtureId AND p.Market = '1X2'
+        WHERE v.FixtureId = @id
+        """, new { id = fixtureId });
+
+    var mvpRatings = await conn.QueryAsync<dynamic>(
+        """
+        SELECT p.PlayerId AS playerId, p.Name AS name, mr.AiRating AS aiRating
+        FROM MatchPlayerRatings mr JOIN Players p ON mr.PlayerId = p.PlayerId
+        WHERE mr.FixtureId=@id ORDER BY mr.AiRating DESC
+        """, new { id = fixtureId });
+    var mvpList = mvpRatings.ToList();
+
+    var players = await conn.QueryAsync<dynamic>(
+        """
+        SELECT mlp.PlayerId AS playerId, mlp.PlayerName AS playerName, mlp.PosCode AS posCode, mlp.IsStarter AS isStarter,
+               mr.AiRating AS aiRating, ur.Rating AS userRating, ur.Review AS review
+        FROM MatchLineupPlayers mlp
+        LEFT JOIN MatchPlayerRatings mr ON mr.FixtureId = mlp.FixtureId AND mr.PlayerId = mlp.PlayerId
+        LEFT JOIN UserPlayerRatings ur ON ur.FixtureId = mlp.FixtureId AND ur.PlayerId = mlp.PlayerId
+        WHERE mlp.FixtureId=@id AND mlp.TeamId=@rm
+        ORDER BY mlp.IsStarter DESC, mr.AiRating DESC
+        """, new { id = fixtureId, rm = RealMadridId });
+
+    var ratingsSummary = await conn.QuerySingleAsync<dynamic>(
+        """
+        SELECT COUNT(*) AS ratedCount, AVG(CAST(ur.Rating AS FLOAT) - CAST(mr.AiRating AS FLOAT)) AS avgUserVsAiDelta
+        FROM UserPlayerRatings ur
+        JOIN MatchPlayerRatings mr ON mr.FixtureId = ur.FixtureId AND mr.PlayerId = ur.PlayerId
+        WHERE ur.FixtureId = @id
+        """, new { id = fixtureId });
+
+    return Results.Ok(new
+    {
+        match,
+        prediction,
+        valueBet,
+        mvp = mvpList.FirstOrDefault(),
+        worst = mvpList.LastOrDefault(),
+        players,
+        ratingsSummary,
+    });
+});
+
 app.MapGet("/api/lineups/departed-since-last", async (Func<IDbConnection> factory) =>
 {
     using var conn = factory();

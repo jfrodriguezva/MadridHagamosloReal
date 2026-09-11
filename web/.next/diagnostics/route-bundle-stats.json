@@ -1,10 +1,10 @@
 [
   {
     "route": "/podcast",
-    "firstLoadUncompressedJsBytes": 542615,
+    "firstLoadUncompressedJsBytes": 542656,
     "firstLoadChunkPaths": [
       ".next\\static\\chunks\\3fntmmi971322.js",
-      ".next\\static\\chunks\\2ieeaw5d8u30_.js",
+      ".next\\static\\chunks\\3ktpa8uvsr_3m.js",
       ".next\\static\\chunks\\3r0x02jkooj_4.js",
       ".next\\static\\chunks\\1inwntv0b4r-7.js",
       ".next\\static\\chunks\\1fovceiqzg878.js",
@@ -14,10 +14,10 @@
   },
   {
     "route": "/jugadores",
-    "firstLoadUncompressedJsBytes": 468644,
+    "firstLoadUncompressedJsBytes": 468685,
     "firstLoadChunkPaths": [
       ".next\\static\\chunks\\3fntmmi971322.js",
-      ".next\\static\\chunks\\3jbesw9sn1nko.js",
+      ".next\\static\\chunks\\33ohogfnk__4s.js",
       ".next\\static\\chunks\\1inwntv0b4r-7.js",
       ".next\\static\\chunks\\1fovceiqzg878.js",
       ".next\\static\\chunks\\3e4keds9ktjdu.js",
@@ -26,10 +26,10 @@
   },
   {
     "route": "/",
-    "firstLoadUncompressedJsBytes": 468043,
+    "firstLoadUncompressedJsBytes": 468084,
     "firstLoadChunkPaths": [
       ".next\\static\\chunks\\3fntmmi971322.js",
-      ".next\\static\\chunks\\3djj23iqenuuy.js",
+      ".next\\static\\chunks\\09l0rnrq9ng35.js",
       ".next\\static\\chunks\\1inwntv0b4r-7.js",
       ".next\\static\\chunks\\1fovceiqzg878.js",
       ".next\\static\\chunks\\3e4keds9ktjdu.js",
@@ -38,10 +38,10 @@
   },
   {
     "route": "/calificaciones",
-    "firstLoadUncompressedJsBytes": 467455,
+    "firstLoadUncompressedJsBytes": 467496,
     "firstLoadChunkPaths": [
       ".next\\static\\chunks\\3fntmmi971322.js",
-      ".next\\static\\chunks\\2yu5-scshj_a7.js",
+      ".next\\static\\chunks\\35cyfavgerng-.js",
       ".next\\static\\chunks\\1inwntv0b4r-7.js",
       ".next\\static\\chunks\\1fovceiqzg878.js",
       ".next\\static\\chunks\\3e4keds9ktjdu.js",
@@ -50,10 +50,10 @@
   },
   {
     "route": "/tactica",
-    "firstLoadUncompressedJsBytes": 466717,
+    "firstLoadUncompressedJsBytes": 466758,
     "firstLoadChunkPaths": [
       ".next\\static\\chunks\\3fntmmi971322.js",
-      ".next\\static\\chunks\\30ajdxas8cd0y.js",
+      ".next\\static\\chunks\\2h55qe078f52u.js",
       ".next\\static\\chunks\\1inwntv0b4r-7.js",
       ".next\\static\\chunks\\1fovceiqzg878.js",
       ".next\\static\\chunks\\3e4keds9ktjdu.js",

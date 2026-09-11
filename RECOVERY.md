@@ -340,6 +340,15 @@ más reciente por episodio (`latestViews`). Se carga a mano desde la columna
 Analytics. Igual que `PlayerAvailability`, la tabla se crea sola en SQLite
 la primera vez que se guarda una medición.
 
+**Postmortem del último partido.** `GET /api/matches/postmortem/last-match`
+junta en una sola llamada lo que antes vivía repartido en cuatro endpoints
+(predicción vs. `Predictions.ActualOutcome`, `ValueBetLog` vs. resultado,
+MVP/peor calificado de `MatchPlayerRatings`, y el delta promedio entre
+`UserPlayerRatings` y la IA para ese partido) — responde de un vistazo
+"¿acertamos, valió la pena el value bet, quién fue el MVP y qué tan de
+acuerdo estuvo el usuario con la IA?" sin cruzar mentalmente cuatro
+pantallas. Visible en el dashboard (`/`), debajo del KPI strip.
+
 ---
 
 ## Generación automática de contenido y transcripción
