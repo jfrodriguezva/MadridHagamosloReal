@@ -19,8 +19,22 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
+      # TranscribeEndpointTests spawnea un proceso Python real. El ml-service/.venv
+      # committeado NO sirve aquí -- su pyvenv.cfg graba la ruta absoluta del Python
+      # de la máquina original (C:\Users\...\Python312), que no existe en este runner,
+      # así que el intérprete ni arranca (falla antes de llegar al import que el test
+      # espera). Se le da a la API un Python real vía las mismas PYTHON_EXE/SCRIPTS_DIR
+      # que ya soporta para la app instalada -- sin faster-whisper instalado, que es
+      # justo el escenario que el test fija a propósito.
+      - uses: actions/setup-python@v5
+        id: py
+        with:
+          python-version: "3.12"
       - name: dotnet test (api.Tests -- SQLite temporal, no necesita SQL Server)
         run: dotnet test api.Tests --configuration Release
+        env:
+          PYTHON_EXE: ${{ steps.py.outputs.python-path }}
+          SCRIPTS_DIR: ${{ github.workspace }}\ml-service\data
 
   web-checks:
     runs-on: windows-latest
