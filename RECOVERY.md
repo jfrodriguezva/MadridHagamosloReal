@@ -288,6 +288,19 @@ redescubriéndolos si algo similar reaparece:
    y el archivo no tiene atributo binario en `.gitattributes`, pero
    `git hash-object` con y sin filtros da el mismo hash).
 
+7. **`export_to_sqlite.py` tenía una lista de tablas desactualizada --
+   `ValueBetLog` y `EpisodeMetrics` existían en SQL Server (migración
+   `007_engagement.sql`) pero no estaban en `TABLES`, así que cada vez que
+   se regeneraba `desktop/madrid.db` esas dos tablas simplemente
+   desaparecían del snapshot (solo se recreaban vacías si la API en modo
+   SQLite llegaba a arrancar y corría su `CREATE TABLE IF NOT EXISTS` de
+   respaldo). Se descubrió el 2026-09-14 al verificar que el value bet
+   recién resuelto (ver arriba) sobrevivía un `export_to_sqlite.py`. Si
+   agregas una tabla nueva en SQL Server que también deba viajar al
+   instalable, agrégala a `TABLES` (y a `IDENTITY_COLUMNS` si tiene
+   `IDENTITY`) en `ml-service/data/export_to_sqlite.py` -- no se detecta
+   sola.
+
 Si reinstalas sobre una versión vieja y el servicio quedó mal registrado, no
 hace falta reinstalar todo — basta con:
 ```powershell
@@ -357,6 +370,39 @@ un snapshot en `ValueBetLog` (se sobreescribe por partido, solo interesa el
 compara esos snapshots contra `Predictions.ActualOutcome` una vez jugado el
 partido — responde "¿esta señal de verdad ayuda?" con datos, no solo la
 mostraba aislada. Visible en Predicción, debajo de la tarjeta de value bet.
+
+**El value bet ya no se pierde si nadie abrió la pantalla antes del kickoff.**
+Originalmente `ValueBetLog` solo se escribía como efecto secundario de que
+alguien visitara `/api/predictions/next/value` en vivo -- si un partido se
+jugaba sin que nadie abriera esa pantalla, el dato se perdía para siempre
+aunque los momios (`OddsSnapshots`) y la predicción (`Predictions`) ya
+estuvieran guardados de por sí. Se corrigió sin agregar ningún proceso en
+background ni cron: la lógica de cálculo se extrajo a un helper
+(`ComputeValueBetAsync` en `api/Program.cs`) que además de servir la
+pantalla en vivo, se reutiliza para **rellenar retroactivamente** cualquier
+partido ya jugado que tenga momios guardados pero ningún `ValueBetLog` --
+se dispara solo, de forma perezosa, la próxima vez que alguien abre el
+dashboard (`/api/matches/postmortem/last-match`) o la pantalla de historial
+(`/api/predictions/value-track-record`), leyendo datos que ya estaban ahí.
+No hace falta correr nada aparte ni recordarlo.
+
+**Si el postmortem/value-track-record no se resuelven, la app avisa en
+pantalla en vez de fallar en silencio.** El dashboard (`web/app/page.tsx`)
+muestra un banner visible ("⚠ Datos sin actualizar") en la tarjeta de
+postmortem cuando `Predictions.ActualOutcome` de ese partido sigue en
+`NULL` -- explícitamente se decidió NO automatizar `persist_predictions.py`
+en background para resolver esto (ver el flujo manual documentado arriba),
+así que la app se limita a ser honesta sobre qué falta en vez de fingir que
+ya está resuelto.
+
+**El tablero de táctica (`/tactica`) ahora recuerda dónde pusiste a cada
+jugador.** Antes solo guardaba la lista de titulares (`SlotPosition` era un
+índice arbitrario `S0`, `S1`...); las coordenadas x/y que arma el usuario
+arrastrando en el campo vivían solo en el estado de React y se perdían al
+recargar. `UserLineupPlayers` tiene ahora columnas `X`/`Y` (migración
+`ml-service/sql/009_lineup_coords.sql`, `FLOAT NULL`) y `POST /api/lineups`
+las guarda; `GET /api/lineups/next` las devuelve y el frontend reconstruye
+el acomodo exacto en vez de arrancar vacío.
 
 **Tendencia de disparos.** `shotsTrend` en `/api/predictions/next/full` —
 promedio de disparos al arco/totales a favor y en contra en los últimos 5

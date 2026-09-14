@@ -363,6 +363,16 @@ export default async function DashboardPage() {
               </span>
             </div>
 
+            {postmortem.prediction?.actualOutcome == null && (
+              <div
+                className="mb-3 rounded-lg px-3 py-2 text-xs font-mono flex items-center gap-2"
+                style={{ background: "rgba(200,150,50,.12)", color: "var(--gold)" }}
+              >
+                ⚠ Datos sin actualizar — falta correr <code>persist_predictions.py</code> +{" "}
+                <code>export_to_sqlite.py</code> para resolver la predicción de este partido.
+              </div>
+            )}
+
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="font-display text-lg font-bold">
                 {postmortem.match.homeTeam} {postmortem.match.homeGoals}–{postmortem.match.awayGoals} {postmortem.match.awayTeam}

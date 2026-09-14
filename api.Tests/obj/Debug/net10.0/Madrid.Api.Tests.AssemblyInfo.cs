@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Madrid.Api.Tests")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+46ec99c343c0ff3ebacf097446dcb3351f7cc177")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+89321e1bd66255ae7875e4d5434c2cec2c6feaa0")]
 [assembly: System.Reflection.AssemblyProductAttribute("Madrid.Api.Tests")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Madrid.Api.Tests")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

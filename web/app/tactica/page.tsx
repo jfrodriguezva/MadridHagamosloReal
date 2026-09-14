@@ -75,6 +75,7 @@ export default function TacticaPage() {
   const fieldRef = useRef<HTMLDivElement>(null);
   const [departed, setDeparted] = useState<{ playerId: number; playerName: string }[]>([]);
   const [nextMatchInfo, setNextMatchInfo] = useState<{ homeTeam: string; awayTeam: string; homeTeamId: number } | null>(null);
+  const [savedSlots, setSavedSlots] = useState<{ playerId: number; x: number | null; y: number | null }[] | null>(null);
 
   useEffect(() => {
     fetch(`${API}/api/players`).then((r) => r.json()).then(setPlayers).catch(() => setPlayers([]));
@@ -88,11 +89,25 @@ export default function TacticaPage() {
       .then((r) => r.json())
       .then(async (data) => {
         setFixtureId(data.fixtureId);
-        // TODO: si en el futuro guardamos x/y reales, cargar aquí. Por ahora
-        // arranca vacío y el usuario arma libremente, o carga el último XI.
+        setSavedSlots(data.slots ?? []);
       })
       .catch(() => {});
   }, []);
+
+  // Reconstruye el tablero con las coordenadas x/y guardadas -- espera a que
+  // la plantilla ya esté cargada para poder resolver cada playerId a su foto/nombre.
+  useEffect(() => {
+    if (!savedSlots || players.length === 0) return;
+    const restored: Placed[] = [];
+    for (const s of savedSlots) {
+      if (s.x == null || s.y == null) continue;
+      const full = players.find((p) => p.playerId === s.playerId);
+      if (!full) continue;
+      restored.push({ player: full, x: s.x, y: s.y });
+    }
+    if (restored.length > 0) setPlaced(restored);
+    setSavedSlots(null);
+  }, [savedSlots, players]);
 
   const nextRival = nextMatchInfo ? (nextMatchInfo.homeTeamId === 541 ? nextMatchInfo.awayTeam : nextMatchInfo.homeTeam) : null;
 
@@ -185,7 +200,7 @@ export default function TacticaPage() {
         body: JSON.stringify({
           fixtureId,
           formation,
-          slots: placed.map((p, i) => ({ slotPosition: `S${i}`, playerId: p.player.playerId })),
+          slots: placed.map((p, i) => ({ slotPosition: `S${i}`, playerId: p.player.playerId, x: p.x, y: p.y })),
         }),
       });
       const data = await res.json();

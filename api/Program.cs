@@ -571,7 +571,8 @@ app.MapGet("/api/lineups/next", async (Func<IDbConnection> factory) =>
 
     var slots = await conn.QueryAsync<dynamic>(
         """
-        SELECT ulp.SlotPosition AS slotPosition, ulp.PlayerId AS playerId, p.Name AS playerName, p.Position AS position
+        SELECT ulp.SlotPosition AS slotPosition, ulp.PlayerId AS playerId, p.Name AS playerName, p.Position AS position,
+               ulp.X AS x, ulp.Y AS y
         FROM UserLineupPlayers ulp JOIN Players p ON ulp.PlayerId = p.PlayerId
         WHERE ulp.UserLineupId = @id
         """, new { id = (int)lineup.userLineupId });
@@ -629,8 +630,8 @@ app.MapPost("/api/lineups", async (Func<IDbConnection> factory, SaveLineupReques
     foreach (var slot in req.Slots)
     {
         await conn.ExecuteAsync(
-            "INSERT INTO UserLineupPlayers (UserLineupId, PlayerId, SlotPosition) VALUES (@lid, @pid, @slot)",
-            new { lid = lineupId, pid = slot.PlayerId, slot = slot.SlotPosition }, tx);
+            "INSERT INTO UserLineupPlayers (UserLineupId, PlayerId, SlotPosition, X, Y) VALUES (@lid, @pid, @slot, @x, @y)",
+            new { lid = lineupId, pid = slot.PlayerId, slot = slot.SlotPosition, x = slot.X, y = slot.Y }, tx);
     }
 
     tx.Commit();
@@ -677,22 +678,27 @@ app.MapGet("/api/predictions/next/scorers", async (Func<IDbConnection> factory) 
     return Results.Ok(new { fixtureId = next.fixtureId, madridExpectedGoals = Math.Round(madridLambda, 2), scorers });
 });
 
-app.MapGet("/api/predictions/next/value", async (Func<IDbConnection> factory) =>
+// Calcula si hay valor modelo-vs-mercado para un fixture puntual y, si lo hay, lo
+// deja guardado en ValueBetLog -- reutilizable tanto para el "próximo partido" (se
+// llama al vivo desde la pantalla de Predicción) como para rellenar retroactivamente
+// un partido ya jugado que nunca se visitó antes del kickoff (ver postmortem y
+// value-track-record más abajo). No depende de que nadie haya abierto un navegador:
+// solo necesita que OddsSnapshots y Predictions ya tengan ese fixture, que es lo que
+// "Actualizar datos"/persist_predictions.py ya guardan de por sí.
+async Task<object> ComputeValueBetAsync(IDbConnection conn, int fixtureId, bool persist, bool skipIfAlreadyLogged = false)
 {
-    using var conn = factory();
-    var fixtureId = await conn.QuerySingleOrDefaultAsync<int?>(
-        $"""
-        SELECT {Top(1)} f.FixtureId FROM Fixtures f
-        WHERE (f.HomeTeamId=@rm OR f.AwayTeamId=@rm) AND f.StatusShort='NS'
-        AND EXISTS (SELECT 1 FROM OddsSnapshots o WHERE o.FixtureId=f.FixtureId)
-        ORDER BY f.KickoffUtc ASC
-        {Limit(1)}
-        """, new { rm = RealMadridId });
-    if (fixtureId is null) return Results.Ok(new { hasValue = false, markets = Array.Empty<object>() });
+    if (skipIfAlreadyLogged)
+    {
+        var already = await conn.QuerySingleOrDefaultAsync<int?>(
+            "SELECT 1 FROM ValueBetLog WHERE FixtureId=@id", new { id = fixtureId });
+        if (already is not null) return new { hasValue = false, markets = Array.Empty<object>() };
+    }
 
-    var isHome = await conn.QuerySingleAsync<bool>(
+    var isHomeRaw = await conn.QuerySingleOrDefaultAsync<bool?>(
         "SELECT CAST(CASE WHEN HomeTeamId=@rm THEN 1 ELSE 0 END AS BIT) FROM Fixtures WHERE FixtureId=@id",
         new { rm = RealMadridId, id = fixtureId });
+    if (isHomeRaw is null) return new { hasValue = false, markets = Array.Empty<object>() };
+    bool isHome = isHomeRaw.Value;
 
     var model = await conn.QuerySingleOrDefaultAsync<dynamic>(
         "SELECT ProbHome AS probHome, ProbDraw AS probDraw, ProbAway AS probAway FROM Predictions WHERE FixtureId=@id AND Market='1X2'",
@@ -700,7 +706,7 @@ app.MapGet("/api/predictions/next/value", async (Func<IDbConnection> factory) =>
     var books = (await conn.QueryAsync<dynamic>(
         "SELECT ImpliedHome AS impliedHome, ImpliedDraw AS impliedDraw, ImpliedAway AS impliedAway FROM OddsSnapshots WHERE FixtureId=@id",
         new { id = fixtureId })).ToList();
-    if (model is null || books.Count == 0) return Results.Ok(new { hasValue = false, markets = Array.Empty<object>() });
+    if (model is null || books.Count == 0) return new { hasValue = false, markets = Array.Empty<object>() };
 
     double avgHome = books.Average(b => (double)b.impliedHome);
     double avgDraw = books.Average(b => (double)b.impliedDraw);
@@ -716,11 +722,11 @@ app.MapGet("/api/predictions/next/value", async (Func<IDbConnection> factory) =>
     double edge = best.modelProb - best.marketProb;
     bool hasValue = edge > 0.03;
 
-    // Se guarda el "value bet" que de verdad se le mostró al usuario -- así después,
-    // una vez jugado el partido, /api/predictions/value-track-record puede medir si
-    // esa divergencia modelo-vs-mercado acertó o no. Se sobreescribe por partido (solo
-    // interesa el último cálculo antes del kickoff, con los momios más recientes).
-    if (hasValue)
+    // Se guarda el "value bet" -- así después, una vez jugado el partido,
+    // /api/predictions/value-track-record puede medir si esa divergencia
+    // modelo-vs-mercado acertó o no. Se sobreescribe por partido (solo interesa
+    // el último cálculo con los momios más recientes que se hayan guardado).
+    if (hasValue && persist)
     {
         // Resultado (H/D/A, mismo vocabulario que Predictions.ActualOutcome) que hace
         // ganador a ESTE mercado para ESTE partido puntual -- depende de si el Madrid
@@ -760,14 +766,30 @@ app.MapGet("/api/predictions/next/value", async (Func<IDbConnection> factory) =>
         });
     }
 
-    return Results.Ok(new
+    return new
     {
         hasValue,
         edgePct = Math.Round(edge * 100, 1),
         market = best.market,
         modelProbPct = Math.Round(best.modelProb * 100, 1),
         marketProbPct = Math.Round(best.marketProb * 100, 1),
-    });
+    };
+}
+
+app.MapGet("/api/predictions/next/value", async (Func<IDbConnection> factory) =>
+{
+    using var conn = factory();
+    var fixtureId = await conn.QuerySingleOrDefaultAsync<int?>(
+        $"""
+        SELECT {Top(1)} f.FixtureId FROM Fixtures f
+        WHERE (f.HomeTeamId=@rm OR f.AwayTeamId=@rm) AND f.StatusShort='NS'
+        AND EXISTS (SELECT 1 FROM OddsSnapshots o WHERE o.FixtureId=f.FixtureId)
+        ORDER BY f.KickoffUtc ASC
+        {Limit(1)}
+        """, new { rm = RealMadridId });
+    if (fixtureId is null) return Results.Ok(new { hasValue = false, markets = Array.Empty<object>() });
+
+    return Results.Ok(await ComputeValueBetAsync(conn, fixtureId.Value, persist: true));
 });
 
 // Historial de aciertos de los value bets ya registrados -- responde la pregunta que
@@ -775,6 +797,21 @@ app.MapGet("/api/predictions/next/value", async (Func<IDbConnection> factory) =>
 app.MapGet("/api/predictions/value-track-record", async (Func<IDbConnection> factory) =>
 {
     using var conn = factory();
+
+    // Rellena retroactivamente cualquier partido ya jugado que tenga momios guardados
+    // (OddsSnapshots) pero nunca se haya calculado su value bet -- pasa cuando el
+    // partido se jugó sin que nadie abriera la pantalla de Predicción antes del
+    // kickoff. Sin esto, esos partidos quedan invisibles para siempre en el historial
+    // aunque los datos para calcularlos ya estén guardados.
+    var pendingBackfill = await conn.QueryAsync<int>(
+        """
+        SELECT DISTINCT o.FixtureId FROM OddsSnapshots o
+        JOIN Fixtures f ON f.FixtureId = o.FixtureId
+        WHERE f.StatusShort = 'FT' AND NOT EXISTS (SELECT 1 FROM ValueBetLog v WHERE v.FixtureId = o.FixtureId)
+        """);
+    foreach (var fid in pendingBackfill)
+        await ComputeValueBetAsync(conn, fid, persist: true, skipIfAlreadyLogged: true);
+
     var stats = await conn.QuerySingleAsync<dynamic>(
         """
         SELECT COUNT(*) AS total, SUM(CASE WHEN v.RecommendedSide = p.ActualOutcome THEN 1 ELSE 0 END) AS correct
@@ -1633,6 +1670,11 @@ app.MapGet("/api/matches/postmortem/last-match", async (Func<IDbConnection> fact
 
     int fixtureId = (int)match.fixtureId;
 
+    // Si este partido tiene momios guardados pero nadie abrió la pantalla de
+    // Predicción antes del kickoff, el value bet nunca se calculó -- se rellena
+    // aquí mismo para que el postmortem no se quede sin ese dato para siempre.
+    await ComputeValueBetAsync(conn, fixtureId, persist: true, skipIfAlreadyLogged: true);
+
     var prediction = await conn.QuerySingleOrDefaultAsync<dynamic>(
         """
         SELECT ProbHome AS probHome, ProbDraw AS probDraw, ProbAway AS probAway,
@@ -2045,7 +2087,7 @@ app.Run();
 record SaveLineupRequest(int FixtureId, string Formation, List<LineupSlot> Slots);
 record RatingRequest(int FixtureId, int PlayerId, decimal Rating, string? Review);
 record PodcastLogRequest(int FixtureId, string Title, string EpisodeLabel, string YoutubeLink);
-record LineupSlot(string SlotPosition, int PlayerId);
+record LineupSlot(string SlotPosition, int PlayerId, double? X = null, double? Y = null);
 record MediaLogRequest(string Kind, string FileName, int? FixtureId);
 record ApiKeyRequest(string ApiKey);
 record EpisodeMetricRequest(int ViewsCount);

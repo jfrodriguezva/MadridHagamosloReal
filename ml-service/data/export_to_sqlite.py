@@ -29,7 +29,7 @@ TABLES = [
     "FixtureStatistics", "Coaches", "CoachCareer", "MatchLineups", "MatchLineupPlayers",
     "MatchEvents2", "MatchPlayerRatings", "UserLineups", "UserLineupPlayers",
     "UserPlayerRatings", "OddsSnapshots", "PodcastHistory", "GeneratedMedia",
-    "PlayerAvailability",
+    "PlayerAvailability", "ValueBetLog", "EpisodeMetrics",
     "PressConferences", "PressTopics",
 ]
 
@@ -46,6 +46,7 @@ IDENTITY_COLUMNS = {
     "GeneratedMedia": "MediaId",
     "PressConferences": "PressConferenceId",
     "PressTopics": "PressTopicId",
+    "EpisodeMetrics": "EpisodeMetricId",
 }
 
 
