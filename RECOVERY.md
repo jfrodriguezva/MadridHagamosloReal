@@ -72,6 +72,21 @@ Requiere en el equipo nuevo:
   — esto es aparte del Python portátil que va DENTRO del instalador, ese no
   hace falta instalarlo tú.
 
+  **`ml-service/.venv` (committeado) NO es portable a otra máquina.** Sirve
+  tal cual solo en la máquina donde se creó -- su `pyvenv.cfg` graba la ruta
+  absoluta del Python base (`home = C:\Users\<usuario>\...\Python312`), y
+  `Scripts\python.exe` la necesita para arrancar. En cualquier otra máquina
+  (otro equipo, o un runner de CI) el archivo `python.exe` existe pero el
+  intérprete no llega a inicializar, así que cualquier script que dependa de
+  ese venv falla con un error de Python roto, no con el error real del
+  script. Si te pasa esto, la solución es regenerar el venv local: borra
+  `ml-service/.venv` y créalo de nuevo con `python -m venv ml-service/.venv`
+  + `pip install -r ml-service/requirements.txt` (y `requirements-dev.txt`/
+  `requirements-transcribe.txt` si los necesitas). Se descubrió el
+  2026-09-14 diagnosticando por qué `api-tests` fallaba en GitHub Actions
+  (ver el job `api-tests` en `.github/workflows/ci.yml`, que ahora usa un
+  Python recién instalado por `actions/setup-python` en vez de este venv).
+
 ### Restaurar la base de datos
 
 Si tienes un `.bak` de SQL Server, restáuralo como `MadridHagamosloReal`. Si
