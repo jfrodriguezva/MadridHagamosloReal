@@ -255,6 +255,39 @@ redescubriéndolos si algo similar reaparece:
    maximizado inicial va en `MainWindow_Loaded`, ya con
    `EnsureCoreWebView2Async` completado.
 
+5. **`seed_dev_db_from_sqlite.py` tronaba al reimportar el snapshot con un
+   equipo/jugador/fixture nuevo.** `refresh_current.py` escribe siempre
+   directo a SQLite (nunca a SQL Server, ver sección de arriba), y
+   `export_to_sqlite.py` solo copia tipo de columna al generar el esquema de
+   SQLite, no los `DEFAULT` de SQL Server. Como `CreatedAtUtc`/`IngestedAtUtc`/
+   `FetchedAtUtc` son `NOT NULL DEFAULT SYSUTCDATETIME()` en SQL Server pero
+   sin default en SQLite, un `INSERT` de `refresh_current.py` que no pasara
+   ese valor dejaba la columna en `NULL` en `madrid.db` — inofensivo en
+   SQLite, pero `seed_dev_db_from_sqlite.py` truena con violación de
+   `NOT NULL` al reimportar esa fila a SQL Server. Pasaba típicamente con un
+   rival de Champions nunca visto antes. Arreglado pasando
+   `datetime.datetime.utcnow().isoformat()` explícito en los `INSERT` de
+   `Leagues`, `Teams`, `Fixtures`, `Players` y `OddsSnapshots` dentro de
+   `refresh_current.py` (las demás tablas que toca ese script — `MatchLineups`,
+   `MatchLineupPlayers`, `MatchEvents2`, `MatchPlayerRatings` — no tienen
+   columna de timestamp `NOT NULL`, no necesitan el fix).
+
+6. **`desktop/madrid.db` estuvo commiteado vacío (0 tablas) desde el commit
+   inicial del repo.** Se descubrió el 2026-09-14: tanto el commit inicial
+   como el HEAD de esa fecha tenían un `madrid.db` de ~4.2MB pero sin ningún
+   `CREATE TABLE` (`PRAGMA integrity_check` daba "ok" igual, así que no salta
+   a la vista con una revisión superficial) — probablemente se commiteó justo
+   después de que algo vació las tablas sin `VACUUM`. Nadie lo notó porque en
+   desarrollo siempre se usa el archivo local real, nunca se vuelve a hacer
+   `git checkout` de este archivo. Se corrigió commiteando la versión real
+   (generada con `data/export_to_sqlite.py` desde SQL Server). **Si vuelves a
+   ver `desktop/madrid.db` con 0 tablas después de un `git pull`/`checkout`,
+   no es un bug nuevo — regenera con `export_to_sqlite.py` (o copia el
+   `madrid.db` de una máquina donde sí tenga datos) antes de commitear otra
+   vez.** Se descartó que sea corrupción por `core.autocrlf` (está en `true`
+   y el archivo no tiene atributo binario en `.gitattributes`, pero
+   `git hash-object` con y sin filtros da el mismo hash).
+
 Si reinstalas sobre una versión vieja y el servicio quedó mal registrado, no
 hace falta reinstalar todo — basta con:
 ```powershell
@@ -348,6 +381,35 @@ MVP/peor calificado de `MatchPlayerRatings`, y el delta promedio entre
 "¿acertamos, valió la pena el value bet, quién fue el MVP y qué tan de
 acuerdo estuvo el usuario con la IA?" sin cruzar mentalmente cuatro
 pantallas. Visible en el dashboard (`/`), debajo del KPI strip.
+
+**Importante — el postmortem no se llena solo.** `refresh_current.py` (el
+botón "Actualizar datos") trae el marcador final a `Fixtures` pero **nunca
+toca `Predictions.ActualOutcome`/`WasCorrect`** — por diseño no depende de
+SQL Server ni del pipeline de entrenamiento. Quien resuelve si la predicción
+acertó es `ml-service/train/persist_predictions.py`, que solo corre contra
+SQL Server (`data/db.py`, no `db_sqlite.py`). El orden correcto después de
+que se jugó un partido, en desarrollo:
+
+```bash
+cd ml-service
+.venv/Scripts/python.exe data/refresh_current.py   # o el botón "Actualizar datos" -> madrid.db
+# asegúrate de que SQL Server ya tenga ese fixture con marcador final
+# (bootstrap-dev-db.ps1 reseedea desde madrid.db si hace falta)
+.venv/Scripts/python.exe train/persist_predictions.py   # backfill ActualOutcome/WasCorrect + repredice próximos partidos
+.venv/Scripts/python.exe data/export_to_sqlite.py        # empuja Predictions actualizado de vuelta a desktop/madrid.db
+```
+
+Sin el segundo y tercer paso, el dashboard sigue mostrando ese partido como
+"pendiente de resolver" en el postmortem y en `value-track-record` aunque el
+marcador ya esté cargado. En la app instalada (100% SQLite, sin SQL Server)
+este backfill no existe todavía — el postmortem de un partido recién jugado
+en la app instalada se queda sin resolver hasta que alguien lo corra en dev
+y reexporte `madrid.db`.
+
+`train_model.py` valida con walk-forward sobre `TEST_SEASONS` (hoy incluye
+hasta 2026) — cada vez que arranca una temporada nueva hay que agregar su
+año a esa lista antes de reentrenar, o `persist_predictions.py` no generará
+predicciones OOF para los partidos de esa temporada.
 
 ---
 

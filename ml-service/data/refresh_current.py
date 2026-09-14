@@ -67,11 +67,22 @@ def api_get(path, params, retries=3):
 
 
 def upsert_league(cur, league_id, name, country):
-    cur.execute("INSERT OR IGNORE INTO Leagues (LeagueId, Name, Country) VALUES (?, ?, ?)", league_id, name, country)
+    cur.execute(
+        "INSERT OR IGNORE INTO Leagues (LeagueId, Name, Country, CreatedAtUtc) VALUES (?, ?, ?, ?)",
+        league_id, name, country, datetime.datetime.utcnow().isoformat(),
+    )
 
 
 def upsert_team(cur, team_id, name, country):
-    cur.execute("INSERT OR IGNORE INTO Teams (TeamId, Name, Country) VALUES (?, ?, ?)", team_id, name, country)
+    # CreatedAtUtc no tiene DEFAULT en el SQLite exportado (export_to_sqlite.py
+    # solo copia tipo de columna, no constraints) pero SQL Server SÍ la exige
+    # NOT NULL -- sin este valor, un equipo nuevo (p.ej. un rival de Champions
+    # nunca visto) deja NULL aquí y seed_dev_db_from_sqlite.py truena al
+    # reimportar el snapshot.
+    cur.execute(
+        "INSERT OR IGNORE INTO Teams (TeamId, Name, Country, CreatedAtUtc) VALUES (?, ?, ?, ?)",
+        team_id, name, country, datetime.datetime.utcnow().isoformat(),
+    )
 
 
 def upsert_fixture(cur, f, competition_type=None):
@@ -82,15 +93,15 @@ def upsert_fixture(cur, f, competition_type=None):
         INSERT INTO Fixtures
             (FixtureId, LeagueId, Season, RoundLabel, KickoffUtc, StatusShort,
              HomeTeamId, AwayTeamId, HomeGoals, AwayGoals, HomeGoalsHT, AwayGoalsHT,
-             VenueId, RefereeName, CompetitionType)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             VenueId, RefereeName, CompetitionType, IngestedAtUtc)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(FixtureId) DO UPDATE SET
             HomeGoals=excluded.HomeGoals, AwayGoals=excluded.AwayGoals, StatusShort=excluded.StatusShort
         """,
         fx["id"], lg["id"], lg["season"], lg["round"], fx["date"], fx["status"]["short"],
         teams["home"]["id"], teams["away"]["id"], goals["home"], goals["away"],
         score["halftime"]["home"], score["halftime"]["away"],
-        fx["venue"]["id"], fx["referee"], comp,
+        fx["venue"]["id"], fx["referee"], comp, datetime.datetime.utcnow().isoformat(),
     )
 
 
@@ -245,13 +256,14 @@ def step_squad(cur):
     for p in squad:
         cur.execute(
             """
-            INSERT INTO Players (PlayerId, TeamId, Name, Position, ShirtNumber, PhotoUrl, IsCurrentSquad)
-            VALUES (?, ?, ?, ?, ?, ?, 1)
+            INSERT INTO Players (PlayerId, TeamId, Name, Position, ShirtNumber, PhotoUrl, IsCurrentSquad, CreatedAtUtc)
+            VALUES (?, ?, ?, ?, ?, ?, 1, ?)
             ON CONFLICT(PlayerId) DO UPDATE SET
                 IsCurrentSquad=1, Name=excluded.Name, Position=excluded.Position,
                 ShirtNumber=excluded.ShirtNumber, PhotoUrl=excluded.PhotoUrl
             """,
             p["id"], REAL_MADRID_ID, p["name"], p["position"], p["number"], p["photo"],
+            datetime.datetime.utcnow().isoformat(),
         )
     log(f"   {len(squad)} jugadores en plantilla vigente")
 
@@ -289,10 +301,11 @@ def step_odds(cur):
             cur.execute(
                 """
                 INSERT INTO OddsSnapshots
-                    (FixtureId, Bookmaker, OddHome, OddDraw, OddAway, ImpliedHome, ImpliedDraw, ImpliedAway)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    (FixtureId, Bookmaker, OddHome, OddDraw, OddAway, ImpliedHome, ImpliedDraw, ImpliedAway, FetchedAtUtc)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 fid, bk["name"], values["Home"], values["Draw"], values["Away"], ih, idr, ia,
+                datetime.datetime.utcnow().isoformat(),
             )
             saved += 1
         time.sleep(0.15)

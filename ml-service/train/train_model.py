@@ -46,7 +46,7 @@ GENERAL_FEATURES = [
     "form5_pts_diff", "form10_pts_diff", "rest_diff",
 ]
 
-TEST_SEASONS = [2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025]
+TEST_SEASONS = [2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026]
 
 
 def rps_3class(probs, actual_idx, n_classes=3):
