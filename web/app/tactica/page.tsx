@@ -105,8 +105,10 @@ export default function TacticaPage() {
       if (!full) continue;
       restored.push({ player: full, x: s.x, y: s.y });
     }
-    if (restored.length > 0) setPlaced(restored);
-    setSavedSlots(null);
+    queueMicrotask(() => {
+      if (restored.length > 0) setPlaced(restored);
+      setSavedSlots(null);
+    });
   }, [savedSlots, players]);
 
   const nextRival = nextMatchInfo ? (nextMatchInfo.homeTeamId === 541 ? nextMatchInfo.awayTeam : nextMatchInfo.homeTeam) : null;

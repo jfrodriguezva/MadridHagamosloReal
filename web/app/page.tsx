@@ -98,9 +98,9 @@ function isRMHome(m: { homeTeamId: number }) {
   return m.homeTeamId === REAL_MADRID_ID;
 }
 
-function rmProb(m: { probHome: number | null; probDraw: number | null; probAway: number | null }) {
+function rmProb(m: { probHome: number | null; probDraw: number | null; probAway: number | null; homeTeamId: number }) {
   if (m.probHome == null) return null;
-  return isRMHome(m as any) ? m.probHome! : m.probAway!;
+  return isRMHome(m) ? m.probHome! : m.probAway!;
 }
 
 function outcomeLabel(outcome: "H" | "D" | "A" | null | undefined, match: { homeTeamId: number }) {

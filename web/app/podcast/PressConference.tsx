@@ -64,7 +64,7 @@ export default function PressConference() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const load = useCallback(() => {
-    setLoading(true);
+    queueMicrotask(() => setLoading(true));
     fetch(`${API}/api/press/next`, { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null))
       .then((d: PressResponse | null) => setData(d))

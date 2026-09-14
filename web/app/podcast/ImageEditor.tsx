@@ -374,6 +374,7 @@ export default function ImageEditor() {
       const dataUrl = canvas.toDataURL("image/png");
       const a = document.createElement("a");
       a.href = dataUrl;
+      // eslint-disable-next-line react-hooks/purity -- handleExport solo corre en el onClick del botón exportar (línea ~505), nunca durante el render
       a.download = `madrid-hagamoslo-real-${Date.now()}.png`;
       a.click();
       fetch(`${API}/api/media/log`, {
@@ -388,7 +389,7 @@ export default function ImageEditor() {
   }
 
   useEffect(() => {
-    if (tool !== "sello") resetCloneSource();
+    if (tool !== "sello") queueMicrotask(resetCloneSource);
   }, [tool]);
 
   return (

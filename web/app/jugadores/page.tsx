@@ -186,13 +186,15 @@ export default function JugadoresPage() {
   const featured = selectedId != null ? filtered.find((p) => p.playerId === selectedId) ?? filtered[0] : filtered[0];
 
   useEffect(() => {
-    setProgress([]);
+    // queueMicrotask: el jugador destacado puede cambiar seguido (clic en la lista) --
+    // sacar el reset de la ejecución síncrona del efecto evita el render en cascada,
+    // sin retraso perceptible (corre antes de que el navegador pinte el frame).
+    queueMicrotask(() => setProgress([]));
     if (featured?.playerId) loadProgress(featured.playerId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [featured?.playerId]);
 
   function loadProgress(playerId: number) {
-    setProgressLoading(true);
+    queueMicrotask(() => setProgressLoading(true));
     fetch(`${API}/api/ratings/season-progress/${playerId}`)
       .then((r) => r.json())
       .then(setProgress)

@@ -47,8 +47,9 @@ export default function PodcastPage() {
   const [tab, setTab] = useState<"contenido" | "grabar" | "editor" | "imagen">("contenido");
   const [mediaKey, setMediaKey] = useState(0);
 
+  // Solo se llama una vez, al montar (ver el useEffect de abajo) -- loading ya
+  // nace en true, no hace falta resetearlo aquí.
   function loadAnalysis() {
-    setLoading(true);
     fetch(`${API}/api/podcast/analysis/last-match`)
       .then((r) => r.json())
       .then((d) => {

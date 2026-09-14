@@ -42,9 +42,9 @@ function isRMHome(m: { homeTeamId: number }) {
   return m.homeTeamId === REAL_MADRID_ID;
 }
 
-function rmProb(m: { probHome: number | null; probDraw: number | null; probAway: number | null }) {
+function rmProb(m: { probHome: number | null; probDraw: number | null; probAway: number | null; homeTeamId: number }) {
   if (m.probHome == null) return null;
-  return isRMHome(m as any) ? m.probHome! : m.probAway!;
+  return isRMHome(m) ? m.probHome! : m.probAway!;
 }
 
 export default function CalendarStrip({ past, future }: { past: CalendarMatch[]; future: CalendarMatch[] }) {
@@ -135,7 +135,7 @@ export default function CalendarStrip({ past, future }: { past: CalendarMatch[];
 
       {selected != null && (
         <div className="mt-4">
-          <MatchDetail fixtureId={selected} onClose={() => setSelected(null)} />
+          <MatchDetail key={selected} fixtureId={selected} onClose={() => setSelected(null)} />
         </div>
       )}
     </div>

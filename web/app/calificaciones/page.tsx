@@ -89,32 +89,6 @@ export default function CalificacionesPage() {
   const [saved, setSaved] = useState<Set<number>>(new Set());
   const [nextMatch, setNextMatch] = useState<{ kickoffUtc: string; homeTeam: string; awayTeam: string } | null>(null);
 
-  useEffect(() => {
-    fetch(`${API}/api/ratings/seasons`)
-      .then((r) => r.json())
-      .then((rows: { season: number }[]) => {
-        const list = rows.map((r) => r.season);
-        setSeasons(list);
-        if (list.length) setActiveSeason(list[0]);
-      });
-    loadLastMatch();
-    fetch(`${API}/api/dashboard/next-match`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => setNextMatch(d))
-      .catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    if (activeSeason == null) return;
-    setExpandedPlayer(null);
-    fetch(`${API}/api/ratings/season/${activeSeason}`)
-      .then((r) => r.json())
-      .then((d) => {
-        setSeasonMatches((d.matches ?? []).slice());
-        setSeasonRatings(d.ratings ?? []);
-      });
-  }, [activeSeason]);
-
   function loadLastMatch() {
     fetch(`${API}/api/ratings/last-match`)
       .then((r) => r.json())
@@ -136,6 +110,32 @@ export default function CalificacionesPage() {
         setSaved(s);
       });
   }
+
+  useEffect(() => {
+    fetch(`${API}/api/ratings/seasons`)
+      .then((r) => r.json())
+      .then((rows: { season: number }[]) => {
+        const list = rows.map((r) => r.season);
+        setSeasons(list);
+        if (list.length) setActiveSeason(list[0]);
+      });
+    loadLastMatch();
+    fetch(`${API}/api/dashboard/next-match`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setNextMatch(d))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (activeSeason == null) return;
+    fetch(`${API}/api/ratings/season/${activeSeason}`)
+      .then((r) => r.json())
+      .then((d) => {
+        setSeasonMatches((d.matches ?? []).slice());
+        setSeasonRatings(d.ratings ?? []);
+        setExpandedPlayer(null);
+      });
+  }, [activeSeason]);
 
   async function saveRating(playerId: number) {
     const raw = drafts[playerId];

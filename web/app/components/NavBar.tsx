@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { MonogramMarkGold } from "./LogoMark";
 
 const LINKS = [
@@ -30,10 +31,10 @@ export default function NavBar({ active }: { active: string }) {
         boxShadow: floating ? "0 6px 18px -6px rgba(20,15,40,.45)" : "none",
       }}
     >
-      <a href="/" className="flex items-center gap-3">
+      <Link href="/" className="flex items-center gap-3">
         <MonogramMarkGold size={30} />
         <span className="font-display font-extrabold text-lg text-white tracking-wide">MADRID HAGÁMOSLO REAL</span>
-      </a>
+      </Link>
       <div className="flex gap-6 items-center">
         {LINKS.map((l) => (
           <a

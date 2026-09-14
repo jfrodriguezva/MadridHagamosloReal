@@ -34,8 +34,9 @@ export default function MatchDetail({ fixtureId, onClose }: { fixtureId: number;
   const [detail, setDetail] = useState<Detail | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // El padre monta esta pieza con key={fixtureId} -- cada partido nuevo es un
+  // componente nuevo, así que loading ya nace en true sin resetearlo a mano aquí.
   useEffect(() => {
-    setLoading(true);
     fetch(`${API}/api/matches/${fixtureId}/detail`)
       .then((r) => (r.ok ? r.json() : null))
       .then(setDetail)
@@ -116,7 +117,7 @@ export default function MatchDetail({ fixtureId, onClose }: { fixtureId: number;
                   )}
                 </span>
                 <span className="font-mono text-xs" style={{ color: "var(--muted)" }}>
-                  {g.minute}'
+                  {g.minute}&apos;
                 </span>
               </div>
             ))}
